@@ -1,4 +1,5 @@
 name: Deploy to GitHub Pages
+
 on:
   push:
     branches: [ main ]
@@ -22,8 +23,10 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+      # ← 重要：Viteに渡すベースパス（あなたの公開URLに対応）
+      - name: Set BASE_PATH for Vite
+        run: echo "BASE_PATH=/nfc-photo-frame/" >> $GITHUB_ENV
       - run: npm ci
-      # 👇 ここがポイント：tsc は回さず、Vite だけでビルド
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
