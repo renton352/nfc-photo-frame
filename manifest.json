@@ -1,7 +1,7 @@
 {
   "name": "キャラクター撮影アプリ",
   "short_name": "撮影アプリ",
-  "start_url": "/",
+  "start_url": "/nfc-photo-frame/",
   "display": "standalone",
   "background_color": "#111827",
   "theme_color": "#111827",
