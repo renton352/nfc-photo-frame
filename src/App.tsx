@@ -63,16 +63,14 @@ export default function App() {
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
   const isMirror = facing === 'user';
 
-  // === ズーム：ハードウェア対応可否 & 値 ===
+  // ズーム（光学/デジタル）
   const [hasOpticalZoom, setHasOpticalZoom] = useState(false);
   const [zoomMin, setZoomMin] = useState(1);
   const [zoomMax, setZoomMax] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(1);             // 光学ズーム用
+  const [digitalZoom, setDigitalZoom] = useState(1); // デジタルフォールバック用
 
-  // デジタルズーム（フォールバック用）
-  const [digitalZoom, setDigitalZoom] = useState(1);
-
-  // デバッグ補助表示
+  // デバッグ
   const [debug, setDebug] = useState<{capZoom?: any}>({});
 
   const getTrack = () => {
@@ -86,24 +84,6 @@ export default function App() {
     const stream: MediaStream | undefined = v?.srcObject;
     stream?.getTracks?.().forEach(t => t.stop());
     if (v) v.srcObject = null;
-  };
-
-  const probeCapabilities = () => {
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    setDebug({ capZoom: caps?.zoom });
-
-    if (caps && caps.zoom) {
-      setHasOpticalZoom(true);
-      setZoomMin(caps.zoom.min ?? 1);
-      setZoomMax(caps.zoom.max ?? 1);
-      setZoom(1);
-    } else {
-      setHasOpticalZoom(false);
-      setZoomMin(1);
-      setZoomMax(1);
-      setZoom(1);
-    }
   };
 
   const startStream = async (to: 'user' | 'environment') => {
@@ -128,7 +108,7 @@ export default function App() {
       let stream: MediaStream | null = null;
       for (const c of candidates) {
         try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
-        catch { /* next */ }
+        catch { /* 次の候補へ */ }
       }
       if (!stream) throw new Error("no stream");
 
@@ -138,13 +118,22 @@ export default function App() {
       }
       setReady(true);
 
-      // 能力確認
-      probeCapabilities();
+      // === 能力確認（ここでcapabilitiesを直接参照して初期化）===
+      const track = getTrack();
+      const caps: any = track?.getCapabilities?.();
+      setDebug({ capZoom: caps?.zoom });
 
-      // 初期値
-      setDigitalZoom(1);
-      if (hasOpticalZoom) {
-        try { await getTrack()?.applyConstraints({ advanced: [{ zoom: 1 }] as any }); } catch {}
+      if (caps?.zoom) {
+        setHasOpticalZoom(true);
+        setZoomMin(caps.zoom.min ?? 1);
+        setZoomMax(caps.zoom.max ?? 1);
+        setZoom(1);
+        try { await track?.applyConstraints({ advanced: [{ zoom: 1 }] as any }); } catch {}
+      } else {
+        setHasOpticalZoom(false);
+        setZoomMin(1);
+        setZoomMax(3); // デジタル上限（必要に応じて変更）
+        setDigitalZoom(1);
       }
     } catch {
       setUsingPlaceholder(true);
@@ -160,7 +149,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
-  // ズーム変更：対応あればハードウェア、なければデジタル
+  // ズーム変更：光学あればapplyConstraints、なければデジタル倍率に反映
   const onZoomChange = async (val: number) => {
     if (hasOpticalZoom) {
       setZoom(val);
@@ -171,7 +160,7 @@ export default function App() {
         catch (e) { console.warn("optical zoom not applied", e); }
       }
     } else {
-      setDigitalZoom(val);
+      setDigitalZoom(Math.max(1, Math.min(val, zoomMax))); // 1〜maxでクランプ
     }
   };
 
@@ -193,9 +182,9 @@ export default function App() {
       const vw = (videoRef.current as any).videoWidth;
       const vh = (videoRef.current as any).videoHeight;
 
-      // ベースのフィット倍率（cover）
+      // coverフィット倍率
       const baseScale = Math.max(w / vw, h / vh);
-      // デジタルズーム時はさらに倍率を乗算
+      // デジタルズーム時は倍率を上乗せ（光学ズーム時は1）
       const totalScale = baseScale * (hasOpticalZoom ? 1 : digitalZoom);
 
       const dw = vw * totalScale;
@@ -204,10 +193,11 @@ export default function App() {
       const dy = (h - dh) / 2;
 
       if (isMirror) {
+        // 反転してから通常の座標で描画（←ずれ修正）
         ctx.save();
         ctx.translate(w, 0);
         ctx.scale(-1, 1);
-        ctx.drawImage(videoRef.current!, w - dx - dw, dy, dw, dh);
+        ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
         ctx.restore();
       } else {
         ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
@@ -269,7 +259,7 @@ export default function App() {
 
   const FrameOverlay = (frames.find((f) => f.id === activeFrame) as any)?.render;
 
-  // プレビュー側の表示：デジタルズーム時だけvideoを拡大
+  // デジタルズーム時はvideoを物理的に拡大（枠でトリミング）。ミラーも合成。
   const videoTransform =
     (isMirror ? "scaleX(-1) " : "") +
     (!hasOpticalZoom ? `scale(${digitalZoom})` : "scale(1)");
@@ -282,12 +272,12 @@ export default function App() {
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}}
         >
           <h1 className="text-2xl sm:text-3xl font-bold mb-2">NFC×Web その場でフォトフレーム</h1>
-          <p className="text-slate-300 mb-4">カメラ撮影→フレーム合成→保存まで行う体験のサンプルです。</p>
+          <p className="text-slate-300 mb-4">カメラ撮影→フレーム合成→保存まで行う体験です。</p>
 
           <div className="space-y-3">
             <Section title="ズーム">
               <div className="text-xs text-slate-400 mb-1">
-                モード：{hasOpticalZoom ? "ハードウェアズーム" : "デジタルズーム（端末非対応のため代替）"}
+                モード：{hasOpticalZoom ? "ハードウェアズーム" : "デジタルズーム（自動フォールバック）"}
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -314,7 +304,6 @@ export default function App() {
               </ol>
             </Section>
 
-            {/* 任意の小さなデバッグ */}
             <div className="text-[11px] text-slate-400">
               <div>capabilities.zoom: {debug.capZoom ? JSON.stringify(debug.capZoom) : "なし"}</div>
             </div>
@@ -359,7 +348,6 @@ export default function App() {
             <span className="text-slate-300 text-sm">{usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}</span>
           </div>
 
-          {/* プレビュー。デジタルズーム時はvideoを拡大、枠でトリミング */}
           <div
             className="relative w-full overflow-hidden rounded-3xl bg-black"
             style={{aspectRatio: (aspect as any).replace(":", "/")}}
@@ -369,7 +357,7 @@ export default function App() {
                 ref={videoRef}
                 playsInline
                 muted
-                className="absolute inset-0 h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full object-cover will-change-transform"
                 style={{ transform: videoTransform, transformOrigin: "center center" }}
               />
             ) : (
