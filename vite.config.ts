@@ -1,10 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// GitHub Actions ‚ª BASE_PATH ‚ğ’“üi/REPO_NAME/jBƒ[ƒJƒ‹‚Í '/'B
-const basePath = process.env.BASE_PATH || '/'
-
+// GitHub Pages ç”¨ã«ãƒ™ãƒ¼ã‚¹ã‚’å›ºå®šï¼ˆã‚ãªãŸã®ãƒªãƒã‚¸ãƒˆãƒªåï¼‰
 export default defineConfig({
+  base: '/nfc-photo-frame/',
   plugins: [react()],
-  base: basePath
 })
