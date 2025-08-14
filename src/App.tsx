@@ -61,17 +61,19 @@ export default function App() {
 
   // 前後カメラ
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
-  // 自撮りのときだけミラー
   const isMirror = facing === 'user';
 
-  // === 追加: ズーム＆AF/AE対応状態 ===
-  const [hasZoom, setHasZoom] = useState(false);
+  // === ズーム：ハードウェア対応可否 & 値 ===
+  const [hasOpticalZoom, setHasOpticalZoom] = useState(false);
   const [zoomMin, setZoomMin] = useState(1);
   const [zoomMax, setZoomMax] = useState(1);
   const [zoom, setZoom] = useState(1);
 
-  const [hasPOI, setHasPOI] = useState(false); // pointsOfInterest対応か
-  const [tapPoint, setTapPoint] = useState<{x:number, y:number, until:number} | null>(null); // UI表示用
+  // デジタルズーム（フォールバック用）
+  const [digitalZoom, setDigitalZoom] = useState(1);
+
+  // デバッグ補助表示
+  const [debug, setDebug] = useState<{capZoom?: any}>({});
 
   const getTrack = () => {
     const v = videoRef.current as any;
@@ -89,20 +91,19 @@ export default function App() {
   const probeCapabilities = () => {
     const track = getTrack();
     const caps: any = track?.getCapabilities?.();
-    // ズーム
-    if (caps && "zoom" in caps && caps.zoom) {
-      setHasZoom(true);
+    setDebug({ capZoom: caps?.zoom });
+
+    if (caps && caps.zoom) {
+      setHasOpticalZoom(true);
       setZoomMin(caps.zoom.min ?? 1);
       setZoomMax(caps.zoom.max ?? 1);
-      setZoom(Math.min(Math.max(zoom, caps.zoom.min ?? 1), caps.zoom.max ?? 1));
+      setZoom(1);
     } else {
-      setHasZoom(false);
+      setHasOpticalZoom(false);
       setZoomMin(1);
       setZoomMax(1);
       setZoom(1);
     }
-    // タップAF/AE（ポイント指定）
-    setHasPOI(!!(caps && "pointsOfInterest" in caps));
   };
 
   const startStream = async (to: 'user' | 'environment') => {
@@ -127,7 +128,7 @@ export default function App() {
       let stream: MediaStream | null = null;
       for (const c of candidates) {
         try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
-        catch { /* 次の候補へ */ }
+        catch { /* next */ }
       }
       if (!stream) throw new Error("no stream");
 
@@ -140,70 +141,37 @@ export default function App() {
       // 能力確認
       probeCapabilities();
 
-      // 端末がズーム対応なら初期ズーム適用（1x）
-      const track = getTrack();
-      const caps: any = track?.getCapabilities?.();
-      if (track && caps && "zoom" in caps && caps.zoom) {
-        try { await track.applyConstraints({ advanced: [{ zoom: 1 }] as any }); } catch {}
+      // 初期値
+      setDigitalZoom(1);
+      if (hasOpticalZoom) {
+        try { await getTrack()?.applyConstraints({ advanced: [{ zoom: 1 }] as any }); } catch {}
       }
     } catch {
       setUsingPlaceholder(true);
       setReady(true);
-      setHasZoom(false);
-      setHasPOI(false);
+      setHasOpticalZoom(false);
+      setDigitalZoom(1);
     }
   };
 
-  // 向きが変わるたびに取り直し（初期は user）
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
-  // === 追加: ズーム変更 ===
+  // ズーム変更：対応あればハードウェア、なければデジタル
   const onZoomChange = async (val: number) => {
-    setZoom(val);
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    if (track && caps && "zoom" in caps) {
-      try {
-        await track.applyConstraints({ advanced: [{ zoom: val }] as any });
-      } catch (e) {
-        // 適用できない端末もある
-        console.warn("zoom not applied", e);
+    if (hasOpticalZoom) {
+      setZoom(val);
+      const track = getTrack();
+      const caps: any = track?.getCapabilities?.();
+      if (track && caps?.zoom) {
+        try { await track.applyConstraints({ advanced: [{ zoom: val }] as any }); }
+        catch (e) { console.warn("optical zoom not applied", e); }
       }
-    }
-  };
-
-  // === 追加: タップAF/AE（ポイント指定）===
-  const onVideoTap = async (e: React.MouseEvent) => {
-    if (!hasPOI) return; // 未対応端末
-    const el = e.currentTarget as HTMLVideoElement;
-    const rect = el.getBoundingClientRect();
-    let x = (e.clientX - rect.left) / rect.width;
-    let y = (e.clientY - rect.top) / rect.height;
-
-    // 画面は自撮り時にミラー表示：ユーザーに直感的に合わせるためxを反転
-    if (isMirror) x = 1 - x;
-
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    if (!track || !caps) return;
-
-    try {
-      // pointsOfInterest のみ適用（端末によっては無視されます）
-      await track.applyConstraints({
-        advanced: [{ pointsOfInterest: [{ x, y }] }] as any
-      });
-
-      // UIマーカー（1.2秒でフェード）
-      setTapPoint({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, until: Date.now() + 1200 });
-      setTimeout(() => {
-        if (tapPoint && Date.now() > tapPoint.until) setTapPoint(null);
-      }, 1300);
-    } catch (err) {
-      console.warn("pointsOfInterest not applied", err);
+    } else {
+      setDigitalZoom(val);
     }
   };
 
@@ -224,21 +192,24 @@ export default function App() {
     if (!usingPlaceholder && videoRef.current && (videoRef.current as any).videoWidth) {
       const vw = (videoRef.current as any).videoWidth;
       const vh = (videoRef.current as any).videoHeight;
-      const scale = Math.max(w / vw, h / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
+
+      // ベースのフィット倍率（cover）
+      const baseScale = Math.max(w / vw, h / vh);
+      // デジタルズーム時はさらに倍率を乗算
+      const totalScale = baseScale * (hasOpticalZoom ? 1 : digitalZoom);
+
+      const dw = vw * totalScale;
+      const dh = vh * totalScale;
       const dx = (w - dw) / 2;
       const dy = (h - dh) / 2;
 
       if (isMirror) {
-        // 自撮り時は左右反転してから描画
         ctx.save();
         ctx.translate(w, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(videoRef.current!, w - dx - dw, dy, dw, dh);
         ctx.restore();
       } else {
-        // 通常（背面など）
         ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
       }
     } else {
@@ -298,6 +269,11 @@ export default function App() {
 
   const FrameOverlay = (frames.find((f) => f.id === activeFrame) as any)?.render;
 
+  // プレビュー側の表示：デジタルズーム時だけvideoを拡大
+  const videoTransform =
+    (isMirror ? "scaleX(-1) " : "") +
+    (!hasOpticalZoom ? `scale(${digitalZoom})` : "scale(1)");
+
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white p-4 sm:p-8">
       <div className="mx-auto max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -306,60 +282,42 @@ export default function App() {
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}}
         >
           <h1 className="text-2xl sm:text-3xl font-bold mb-2">NFC×Web その場でフォトフレーム</h1>
-          <p className="text-slate-300 mb-4">NFCタグでWebアプリを起動し、その場でカメラ撮影→フレーム合成→保存まで行う体験のサンプルです。</p>
+          <p className="text-slate-300 mb-4">カメラ撮影→フレーム合成→保存まで行う体験のサンプルです。</p>
 
           <div className="space-y-3">
+            <Section title="ズーム">
+              <div className="text-xs text-slate-400 mb-1">
+                モード：{hasOpticalZoom ? "ハードウェアズーム" : "デジタルズーム（端末非対応のため代替）"}
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={hasOpticalZoom ? zoomMin : 1}
+                  max={hasOpticalZoom ? zoomMax : 3}
+                  step="0.1"
+                  value={hasOpticalZoom ? zoom : digitalZoom}
+                  onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <span className="text-sm tabular-nums">
+                  {(hasOpticalZoom ? zoom : digitalZoom).toFixed(1)}x
+                </span>
+              </div>
+            </Section>
+
             <Section title="体験フロー">
               <ol className="list-decimal ml-6 space-y-1 text-slate-200">
-                <li>NFCタグタッチ → Webアプリ起動（PWA推奨）</li>
-                <li>カメラ許可 → プレビューにフレーム重畳</li>
+                <li>カメラ許可 → プレビュー表示</li>
+                <li>フレーム選択・ズーム調整</li>
                 <li>撮影（カウントダウン対応）</li>
                 <li>端末へ保存 or SNS共有</li>
               </ol>
             </Section>
-            <Section title="技術構成（簡易）">
-              <ul className="list-disc ml-6 space-y-1 text-slate-200">
-                <li>起動: NDEF（URL）/ iOSショートカット / PWA</li>
-                <li>撮影: <code>getUserMedia</code> + <code>Canvas</code></li>
-                <li>フレーム: Canvas描画 or 透過PNG重畳</li>
-                <li>保存: <code>canvas.toDataURL</code> → ダウンロード</li>
-              </ul>
-            </Section>
-            <Section title="商用メモ">
-              <ul className="list-disc ml-6 space-y-1 text-slate-200">
-                <li>HTTPS必須（カメラ利用）</li>
-                <li>個人情報配慮：原則サーバー保存なし</li>
-                <li>IP案件：フレーム差し替えで量産</li>
-              </ul>
-            </Section>
 
-            {/* 追加: ズームUI（対応端末のみ） */}
-            {hasZoom && (
-              <Section title="ズーム">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={zoomMin}
-                    max={zoomMax}
-                    step="0.1"
-                    value={zoom}
-                    onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                  <span className="text-sm tabular-nums">{zoom.toFixed(1)}x</span>
-                </div>
-                <div className="text-xs text-slate-400 mt-1">端末対応時のみ表示されます</div>
-              </Section>
-            )}
-
-            {/* 追加: タップAF/AE（対応端末のみ） */}
-            {hasPOI && (
-              <Section title="タップAF/AE">
-                <div className="text-sm text-slate-300">
-                  プレビューをタップすると、その位置にピント・露出を合わせます（対応端末のみ）。
-                </div>
-              </Section>
-            )}
+            {/* 任意の小さなデバッグ */}
+            <div className="text-[11px] text-slate-400">
+              <div>capabilities.zoom: {debug.capZoom ? JSON.stringify(debug.capZoom) : "なし"}</div>
+            </div>
           </div>
         </motion.div>
 
@@ -387,7 +345,6 @@ export default function App() {
               <option value="16:9">16:9（横長）</option>
             </select>
 
-            {/* カメラ切替 */}
             <button
               onClick={() => setFacing(prev => prev === 'user' ? 'environment' : 'user')}
               className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
@@ -402,8 +359,9 @@ export default function App() {
             <span className="text-slate-300 text-sm">{usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}</span>
           </div>
 
+          {/* プレビュー。デジタルズーム時はvideoを拡大、枠でトリミング */}
           <div
-            className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black"
+            className="relative w-full overflow-hidden rounded-3xl bg-black"
             style={{aspectRatio: (aspect as any).replace(":", "/")}}
           >
             {!usingPlaceholder ? (
@@ -411,9 +369,8 @@ export default function App() {
                 ref={videoRef}
                 playsInline
                 muted
-                onClick={onVideoTap}  // ← 追加：タップでAF/AE
                 className="absolute inset-0 h-full w-full object-cover"
-                style={{ transform: isMirror ? 'scaleX(-1)' : 'none', touchAction: 'manipulation', cursor: hasPOI ? 'crosshair' : 'default' }}
+                style={{ transform: videoTransform, transformOrigin: "center center" }}
               />
             ) : (
               <div className="absolute inset-0 h-full w-full bg-gradient-to-br from-emerald-300 to-sky-300 grid place-items-center">
@@ -424,21 +381,6 @@ export default function App() {
             <div className="absolute inset-0">
               {FrameOverlay && <FrameOverlay />}
             </div>
-
-            {/* タップ位置のガイド（1.2秒表示） */}
-            {tapPoint && Date.now() < tapPoint.until && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: `calc(${tapPoint.x * 100}% - 16px)`,
-                  top:  `calc(${tapPoint.y * 100}% - 16px)`,
-                  width: 32, height: 32,
-                  borderRadius: 9999,
-                  border: "2px solid rgba(255,255,255,0.9)",
-                  boxShadow: "0 0 10px rgba(0,0,0,0.6)"
-                }}
-              />
-            )}
 
             {countdown > 0 && (
               <div className="absolute inset-0 grid place-items-center">
