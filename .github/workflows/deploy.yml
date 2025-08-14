@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -21,14 +21,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install
-        run: npm install
-      - name: Set BASE_PATH for Vite
-        run: echo "BASE_PATH=/${GITHUB_REPOSITORY#*/}/" >> $GITHUB_ENV
-      - name: Build
-        run: npm run build
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+          cache: 'npm'
+      - run: npm ci
+      # 👇 ここがポイント：tsc は回さず、Vite だけでビルド
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
