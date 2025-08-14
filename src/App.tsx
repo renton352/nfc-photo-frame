@@ -59,28 +59,62 @@ export default function App() {
   const [countdown, setCountdown] = useState(0);
   const [aspect, setAspect] = useState(initialAspect);
 
+  // 追加：カメラ向き（自撮り or 背面）
+  const [facing, setFacing] = useState<'user' | 'environment'>('user');
+
+  // 追加：現在のストリームを停止
+  const stopStream = () => {
+    const v = videoRef.current as any;
+    const stream: MediaStream | undefined = v?.srcObject;
+    stream?.getTracks?.().forEach((t) => t.stop());
+    if (v) v.srcObject = null;
+  };
+
+  // 追加：向きに応じてストリーム開始（フォールバックつき）
+  const startStream = async (to: 'user' | 'environment') => {
+    try {
+      stopStream();
+      setReady(false);
+      setUsingPlaceholder(false);
+
+      const candidates: MediaStreamConstraints[] =
+        to === 'environment'
+          ? [
+              { video: { facingMode: { exact: 'environment' } }, audio: false },
+              { video: { facingMode: 'environment' }, audio: false },
+              { video: true, audio: false },
+            ]
+          : [
+              { video: { facingMode: { exact: 'user' } }, audio: false },
+              { video: { facingMode: 'user' }, audio: false },
+              { video: true, audio: false },
+            ];
+
+      let stream: MediaStream | null = null;
+      for (const c of candidates) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c);
+          break;
+        } catch { /* 次の候補へ */ }
+      }
+      if (!stream) throw new Error('no stream');
+
+      if (videoRef.current) {
+        (videoRef.current as any).srcObject = stream;
+        await videoRef.current.play();
+      }
+      setReady(true);
+    } catch {
+      setUsingPlaceholder(true);
+      setReady(true);
+    }
+  };
+
+  // 置き換え：向きが変わるたびにストリームを取り直す（初期は 'user'）
   useEffect(() => {
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-        if (videoRef.current) {
-          (videoRef.current as any).srcObject = stream;
-          await videoRef.current.play();
-          setReady(true);
-        }
-      } catch (e) {
-        setUsingPlaceholder(true);
-        setReady(true);
-      }
-    })();
-    return () => {
-      const v = videoRef.current as any;
-      const stream = v && v.srcObject;
-      if (stream && typeof stream.getTracks === "function") {
-        stream.getTracks().forEach((t: any) => t.stop());
-      }
-    };
-  }, []);
+    startStream(facing);
+    return () => stopStream();
+  }, [facing]);
 
   const doCapture = async () => {
     for (let i = 3; i >= 1; i--) {
@@ -221,6 +255,16 @@ export default function App() {
               <option value="1:1">1:1（SNS向け）</option>
               <option value="16:9">16:9（横長）</option>
             </select>
+
+            {/* 追加：カメラ切替ボタン */}
+            <button
+              onClick={() => setFacing(prev => prev === 'user' ? 'environment' : 'user')}
+              className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
+              title="フロント/背面を切り替え"
+            >
+              カメラ切替（今：{facing === 'user' ? '自撮り' : '背面'}）
+            </button>
+
             <button onClick={doCapture} className="rounded-2xl px-4 py-2 bg-emerald-500 hover:bg-emerald-400 font-semibold shadow">
               撮影する
             </button>
