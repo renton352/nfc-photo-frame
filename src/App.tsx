@@ -271,7 +271,9 @@ export default function App() {
           className="lg:col-span-1 bg-slate-800/60 rounded-2xl p-5 sm:p-6 shadow-xl border border-white/10"
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}}
         >
-          <h1 className="text-2xl sm:text-3xl font-bold mb-2">NFC×Web その場でフォトフレーム</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold mb-2">
+  NFC×Web その場でフォトフレーム <span style={{fontSize:12,opacity:.6}}>v-zoom-fallback</span>
+</h1>
           <p className="text-slate-300 mb-4">カメラ撮影→フレーム合成→保存まで行う体験です。</p>
 
           <div className="space-y-3">
