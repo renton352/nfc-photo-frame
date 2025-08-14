@@ -1,5 +1,4 @@
 name: Deploy to GitHub Pages
-
 on:
   push:
     branches: [ main ]
@@ -22,11 +21,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
-      # ← 重要：Viteに渡すベースパス（あなたの公開URLに対応）
+          # ❌ lockファイルが無いので cache は使わない（ここが失敗ポイント）
+          # cache: 'npm'
       - name: Set BASE_PATH for Vite
         run: echo "BASE_PATH=/nfc-photo-frame/" >> $GITHUB_ENV
-      - run: npm ci
+      # ❌ npm ci → ✅ npm install（lockファイル不要）
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
