@@ -59,18 +59,18 @@ export default function App() {
   const [countdown, setCountdown] = useState(0);
   const [aspect, setAspect] = useState(initialAspect);
 
-  // 追加：カメラ向き（自撮り or 背面）
+  // 前後カメラ
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
+  // 自撮りのときだけミラー
+  const isMirror = facing === 'user';
 
-  // 追加：現在のストリームを停止
   const stopStream = () => {
     const v = videoRef.current as any;
     const stream: MediaStream | undefined = v?.srcObject;
-    stream?.getTracks?.().forEach((t) => t.stop());
+    stream?.getTracks?.().forEach(t => t.stop());
     if (v) v.srcObject = null;
   };
 
-  // 追加：向きに応じてストリーム開始（フォールバックつき）
   const startStream = async (to: 'user' | 'environment') => {
     try {
       stopStream();
@@ -92,12 +92,10 @@ export default function App() {
 
       let stream: MediaStream | null = null;
       for (const c of candidates) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(c);
-          break;
-        } catch { /* 次の候補へ */ }
+        try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+        catch { /* 次の候補へ */ }
       }
-      if (!stream) throw new Error('no stream');
+      if (!stream) throw new Error("no stream");
 
       if (videoRef.current) {
         (videoRef.current as any).srcObject = stream;
@@ -110,7 +108,7 @@ export default function App() {
     }
   };
 
-  // 置き換え：向きが変わるたびにストリームを取り直す（初期は 'user'）
+  // 向きが変わるたびに取り直し（初期は user）
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
@@ -138,7 +136,18 @@ export default function App() {
       const dh = vh * scale;
       const dx = (w - dw) / 2;
       const dy = (h - dh) / 2;
-      ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
+
+      if (isMirror) {
+        // 自撮り時は左右反転してから描画
+        ctx.save();
+        ctx.translate(w, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(videoRef.current!, w - dx - dw, dy, dw, dh);
+        ctx.restore();
+      } else {
+        // 通常（背面など）
+        ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
+      }
     } else {
       const grad = ctx.createLinearGradient(0, 0, w, h);
       grad.addColorStop(0, "#6ee7b7");
@@ -151,6 +160,7 @@ export default function App() {
       ctx.fillText("(Camera preview placeholder)", w / 2, h / 2);
     }
 
+    // フレーム描画
     switch (activeFrame) {
       case "sparkle": {
         ctx.strokeStyle = "rgba(255,255,255,0.85)";
@@ -163,8 +173,8 @@ export default function App() {
         ctx.lineWidth = 24;
         ctx.strokeRect(20, 20, w - 40, h - 40);
         ctx.fillStyle = "rgba(244,114,182,1)";
-        const rw = 260, rh = 56;
-        ctx.fillRect((w - rw) / 2, 8, rw, rh);
+        const rw = 260;
+        ctx.fillRect((w - rw) / 2, 8, rw, 56);
         ctx.fillStyle = "white";
         ctx.font = "bold 28px system-ui";
         ctx.textAlign = "center";
@@ -256,7 +266,7 @@ export default function App() {
               <option value="16:9">16:9（横長）</option>
             </select>
 
-            {/* 追加：カメラ切替ボタン */}
+            {/* カメラ切替 */}
             <button
               onClick={() => setFacing(prev => prev === 'user' ? 'environment' : 'user')}
               className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
@@ -273,7 +283,13 @@ export default function App() {
 
           <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black" style={{aspectRatio: (aspect as any).replace(":", "/")}}>
             {!usingPlaceholder ? (
-              <video ref={videoRef} playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="absolute inset-0 h-full w-full object-cover"
+                style={{ transform: isMirror ? 'scaleX(-1)' : 'none' }}
+              />
             ) : (
               <div className="absolute inset-0 h-full w-full bg-gradient-to-br from-emerald-300 to-sky-300 grid place-items-center">
                 <div className="text-black/70 font-semibold text-lg">(カメラ権限なしのためダミー表示)</div>
