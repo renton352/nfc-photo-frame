@@ -64,45 +64,11 @@ export default function App() {
   // 自撮りのときだけミラー
   const isMirror = facing === 'user';
 
-  // === 追加: ズーム＆AF/AE対応状態 ===
-  const [hasZoom, setHasZoom] = useState(false);
-  const [zoomMin, setZoomMin] = useState(1);
-  const [zoomMax, setZoomMax] = useState(1);
-  const [zoom, setZoom] = useState(1);
-
-  const [hasPOI, setHasPOI] = useState(false); // pointsOfInterest対応か
-  const [tapPoint, setTapPoint] = useState<{x:number, y:number, until:number} | null>(null); // UI表示用
-
-  const getTrack = () => {
-    const v = videoRef.current as any;
-    const stream: MediaStream | undefined = v?.srcObject;
-    return stream?.getVideoTracks?.()[0];
-  };
-
   const stopStream = () => {
     const v = videoRef.current as any;
     const stream: MediaStream | undefined = v?.srcObject;
     stream?.getTracks?.().forEach(t => t.stop());
     if (v) v.srcObject = null;
-  };
-
-  const probeCapabilities = () => {
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    // ズーム
-    if (caps && "zoom" in caps && caps.zoom) {
-      setHasZoom(true);
-      setZoomMin(caps.zoom.min ?? 1);
-      setZoomMax(caps.zoom.max ?? 1);
-      setZoom(Math.min(Math.max(zoom, caps.zoom.min ?? 1), caps.zoom.max ?? 1));
-    } else {
-      setHasZoom(false);
-      setZoomMin(1);
-      setZoomMax(1);
-      setZoom(1);
-    }
-    // タップAF/AE（ポイント指定）
-    setHasPOI(!!(caps && "pointsOfInterest" in caps));
   };
 
   const startStream = async (to: 'user' | 'environment') => {
@@ -116,12 +82,12 @@ export default function App() {
           ? [
               { video: { facingMode: { exact: 'environment' } }, audio: false },
               { video: { facingMode: 'environment' }, audio: false },
-              { video: true, audio: false },
+              { video: true, audio: false }
             ]
           : [
               { video: { facingMode: { exact: 'user' } }, audio: false },
               { video: { facingMode: 'user' }, audio: false },
-              { video: true, audio: false },
+              { video: true, audio: false }
             ];
 
       let stream: MediaStream | null = null;
@@ -136,76 +102,16 @@ export default function App() {
         await videoRef.current.play();
       }
       setReady(true);
-
-      // 能力確認
-      probeCapabilities();
-
-      // 端末がズーム対応なら初期ズーム適用（1x）
-      const track = getTrack();
-      const caps: any = track?.getCapabilities?.();
-      if (track && caps && "zoom" in caps && caps.zoom) {
-        try { await track.applyConstraints({ advanced: [{ zoom: 1 }] as any }); } catch {}
-      }
     } catch {
       setUsingPlaceholder(true);
       setReady(true);
-      setHasZoom(false);
-      setHasPOI(false);
     }
   };
 
-  // 向きが変わるたびに取り直し（初期は user）
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
-
-  // === 追加: ズーム変更 ===
-  const onZoomChange = async (val: number) => {
-    setZoom(val);
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    if (track && caps && "zoom" in caps) {
-      try {
-        await track.applyConstraints({ advanced: [{ zoom: val }] as any });
-      } catch (e) {
-        // 適用できない端末もある
-        console.warn("zoom not applied", e);
-      }
-    }
-  };
-
-  // === 追加: タップAF/AE（ポイント指定）===
-  const onVideoTap = async (e: React.MouseEvent) => {
-    if (!hasPOI) return; // 未対応端末
-    const el = e.currentTarget as HTMLVideoElement;
-    const rect = el.getBoundingClientRect();
-    let x = (e.clientX - rect.left) / rect.width;
-    let y = (e.clientY - rect.top) / rect.height;
-
-    // 画面は自撮り時にミラー表示：ユーザーに直感的に合わせるためxを反転
-    if (isMirror) x = 1 - x;
-
-    const track = getTrack();
-    const caps: any = track?.getCapabilities?.();
-    if (!track || !caps) return;
-
-    try {
-      // pointsOfInterest のみ適用（端末によっては無視されます）
-      await track.applyConstraints({
-        advanced: [{ pointsOfInterest: [{ x, y }] }] as any
-      });
-
-      // UIマーカー（1.2秒でフェード）
-      setTapPoint({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height, until: Date.now() + 1200 });
-      setTimeout(() => {
-        if (tapPoint && Date.now() > tapPoint.until) setTapPoint(null);
-      }, 1300);
-    } catch (err) {
-      console.warn("pointsOfInterest not applied", err);
-    }
-  };
 
   const doCapture = async () => {
     for (let i = 3; i >= 1; i--) {
@@ -231,14 +137,12 @@ export default function App() {
       const dy = (h - dh) / 2;
 
       if (isMirror) {
-        // 自撮り時は左右反転してから描画
         ctx.save();
         ctx.translate(w, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(videoRef.current!, w - dx - dw, dy, dw, dh);
         ctx.restore();
       } else {
-        // 通常（背面など）
         ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
       }
     } else {
@@ -253,15 +157,13 @@ export default function App() {
       ctx.fillText("(Camera preview placeholder)", w / 2, h / 2);
     }
 
-    // フレーム描画
     switch (activeFrame) {
-      case "sparkle": {
+      case "sparkle":
         ctx.strokeStyle = "rgba(255,255,255,0.85)";
         ctx.lineWidth = 18;
         ctx.strokeRect(16, 16, w - 32, h - 32);
         break;
-      }
-      case "ribbon": {
+      case "ribbon":
         ctx.strokeStyle = "rgba(244,114,182,0.9)";
         ctx.lineWidth = 24;
         ctx.strokeRect(20, 20, w - 40, h - 40);
@@ -276,8 +178,7 @@ export default function App() {
         ctx.font = "600 26px system-ui";
         ctx.fillText("#Today", w - 120, h - 40);
         break;
-      }
-      case "neon": {
+      case "neon":
         ctx.strokeStyle = "rgba(0,255,255,0.8)";
         (ctx as any).shadowColor = "rgba(0,255,255,0.6)";
         (ctx as any).shadowBlur = 25;
@@ -289,7 +190,6 @@ export default function App() {
         ctx.textAlign = "center";
         ctx.fillText("Oshi Camera", w / 2, h - 32);
         break;
-      }
     }
 
     const dataUrl = canvas.toDataURL("image/png");
@@ -332,34 +232,6 @@ export default function App() {
                 <li>IP案件：フレーム差し替えで量産</li>
               </ul>
             </Section>
-
-            {/* 追加: ズームUI（対応端末のみ） */}
-            {hasZoom && (
-              <Section title="ズーム">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min={zoomMin}
-                    max={zoomMax}
-                    step="0.1"
-                    value={zoom}
-                    onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                  <span className="text-sm tabular-nums">{zoom.toFixed(1)}x</span>
-                </div>
-                <div className="text-xs text-slate-400 mt-1">端末対応時のみ表示されます</div>
-              </Section>
-            )}
-
-            {/* 追加: タップAF/AE（対応端末のみ） */}
-            {hasPOI && (
-              <Section title="タップAF/AE">
-                <div className="text-sm text-slate-300">
-                  プレビューをタップすると、その位置にピント・露出を合わせます（対応端末のみ）。
-                </div>
-              </Section>
-            )}
           </div>
         </motion.div>
 
@@ -387,7 +259,6 @@ export default function App() {
               <option value="16:9">16:9（横長）</option>
             </select>
 
-            {/* カメラ切替 */}
             <button
               onClick={() => setFacing(prev => prev === 'user' ? 'environment' : 'user')}
               className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
@@ -402,18 +273,14 @@ export default function App() {
             <span className="text-slate-300 text-sm">{usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}</span>
           </div>
 
-          <div
-            className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black"
-            style={{aspectRatio: (aspect as any).replace(":", "/")}}
-          >
+          <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black" style={{aspectRatio: (aspect as any).replace(":", "/")}}>
             {!usingPlaceholder ? (
               <video
                 ref={videoRef}
                 playsInline
                 muted
-                onClick={onVideoTap}  // ← 追加：タップでAF/AE
                 className="absolute inset-0 h-full w-full object-cover"
-                style={{ transform: isMirror ? 'scaleX(-1)' : 'none', touchAction: 'manipulation', cursor: hasPOI ? 'crosshair' : 'default' }}
+                style={{ transform: isMirror ? 'scaleX(-1)' : 'none' }}
               />
             ) : (
               <div className="absolute inset-0 h-full w-full bg-gradient-to-br from-emerald-300 to-sky-300 grid place-items-center">
@@ -424,21 +291,6 @@ export default function App() {
             <div className="absolute inset-0">
               {FrameOverlay && <FrameOverlay />}
             </div>
-
-            {/* タップ位置のガイド（1.2秒表示） */}
-            {tapPoint && Date.now() < tapPoint.until && (
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  left: `calc(${tapPoint.x * 100}% - 16px)`,
-                  top:  `calc(${tapPoint.y * 100}% - 16px)`,
-                  width: 32, height: 32,
-                  borderRadius: 9999,
-                  border: "2px solid rgba(255,255,255,0.9)",
-                  boxShadow: "0 0 10px rgba(0,0,0,0.6)"
-                }}
-              />
-            )}
 
             {countdown > 0 && (
               <div className="absolute inset-0 grid place-items-center">
