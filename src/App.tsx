@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
+
+type Snapshot = { url: string; ts: number; blob?: Blob };
 
 const frames = [
   {
@@ -7,13 +9,37 @@ const frames = [
     name: "キラキラ・フレーム",
     render: () => (
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-3 left-3 h-16 w-16 rounded-full blur-md opacity-70" style={{background:"radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)"}}/>
-        <div className="absolute top-3 right-3 h-16 w-16 rounded-full blur-md opacity-70" style={{background:"radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)"}}/>
-        <div className="absolute bottom-3 left-3 h-16 w-16 rounded-full blur-md opacity-70" style={{background:"radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)"}}/>
-        <div className="absolute bottom-3 right-3 h-16 w-16 rounded-full blur-md opacity-70" style={{background:"radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)"}}/>
+        <div
+          className="absolute top-3 left-3 h-16 w-16 rounded-full blur-md opacity-70"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
+          }}
+        />
+        <div
+          className="absolute top-3 right-3 h-16 w-16 rounded-full blur-md opacity-70"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
+          }}
+        />
+        <div
+          className="absolute bottom-3 left-3 h-16 w-16 rounded-full blur-md opacity-70"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
+          }}
+        />
+        <div
+          className="absolute bottom-3 right-3 h-16 w-16 rounded-full blur-md opacity-70"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
+          }}
+        />
         <div className="absolute inset-2 rounded-2xl border-[6px] border-white/70 shadow-[0_0_40px_rgba(255,255,255,0.35)]" />
       </div>
-    )
+    ),
   },
   {
     id: "ribbon",
@@ -28,72 +54,145 @@ const frames = [
           #Today
         </div>
       </div>
-    )
+    ),
   },
   {
     id: "neon",
     name: "ネオン・フレーム",
     render: () => (
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-4 rounded-2xl" style={{boxShadow:"0 0 12px rgba(0,255,255,0.8), inset 0 0 24px rgba(0,255,255,0.35)"}} />
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-xl font-bold text-white" style={{background:"linear-gradient(90deg, rgba(0,255,255,0.5), rgba(255,0,255,0.5))", textShadow:"0 2px 8px rgba(0,0,0,0.6)"}}>
+        <div
+          className="absolute inset-4 rounded-2xl"
+          style={{
+            boxShadow:
+              "0 0 12px rgba(0,255,255,0.8), inset 0 0 24px rgba(0,255,255,0.35)",
+          }}
+        />
+        <div
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-xl font-bold text-white"
+          style={{
+            background:
+              "linear-gradient(90deg, rgba(0,255,255,0.5), rgba(255,0,255,0.5))",
+            textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+          }}
+        >
           Oshi Camera
         </div>
       </div>
-    )
-  }
+    ),
+  },
 ];
+
+const SETTINGS_KEY = "oshi.camera.settings.v1";
+
+type Settings = {
+  activeFrame: string;
+  aspect: "3:4" | "1:1" | "16:9";
+  facing: "user" | "environment";
+  guideOn: boolean;
+  shutterSoundOn: boolean;
+  timerSec: 0 | 3 | 5;
+};
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const params = new URLSearchParams(location.search);
+  const params = useMemo(() => new URLSearchParams(location.search), []);
 
-  const initialFrame = params.get("frame") || frames[0].id;
-  const initialAspect = params.get("aspect") || "3:4";
+  // URLパラメータ or 保存値 or 既定
+  const saved: Partial<Settings> = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }, []);
+
+  const initialFrame = (params.get("frame") ||
+    saved.activeFrame ||
+    frames[0].id) as string;
+
+  const initialAspect = (params.get("aspect") ||
+    saved.aspect ||
+    "3:4") as Settings["aspect"];
+
+  const initialFacing = (saved.facing || "user") as Settings["facing"];
+
+  const initialTimer = (Number(params.get("timer")) ||
+    saved.timerSec ||
+    3) as Settings["timerSec"];
 
   const [ready, setReady] = useState(false);
   const [usingPlaceholder, setUsingPlaceholder] = useState(false);
   const [activeFrame, setActiveFrame] = useState(initialFrame);
-  const [snapshots, setSnapshots] = useState<{url:string,ts:number}[]>([]);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [countdown, setCountdown] = useState(0);
-  const [aspect, setAspect] = useState(initialAspect);
+  const [aspect, setAspect] = useState<Settings["aspect"]>(initialAspect);
+  const [facing, setFacing] =
+    useState<Settings["facing"]>(initialFacing);
+  const [guideOn, setGuideOn] = useState<boolean>(saved.guideOn ?? false);
+  const [shutterSoundOn, setShutterSoundOn] = useState<boolean>(
+    saved.shutterSoundOn ?? true
+  );
+  const [timerSec, setTimerSec] = useState<Settings["timerSec"]>(
+    initialTimer
+  );
+  const [flashOn, setFlashOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
-  // 前後カメラ
-  const [facing, setFacing] = useState<'user' | 'environment'>('user');
-  // 自撮りのときだけミラー
-  const isMirror = facing === 'user';
+  const isMirror = facing === "user";
 
+  // ---- 保存 ----
+  useEffect(() => {
+    const s: Settings = {
+      activeFrame,
+      aspect,
+      facing,
+      guideOn,
+      shutterSoundOn,
+      timerSec,
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  }, [activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec]);
+
+  // ---- カメラ制御 ----
   const stopStream = () => {
     const v = videoRef.current as any;
     const stream: MediaStream | undefined = v?.srcObject;
-    stream?.getTracks?.().forEach(t => t.stop());
+    stream?.getTracks?.().forEach((t) => t.stop());
     if (v) v.srcObject = null;
+    setTorchOn(false);
+    setTorchSupported(false);
   };
 
-  const startStream = async (to: 'user' | 'environment') => {
+  const startStream = async (to: "user" | "environment") => {
     try {
       stopStream();
       setReady(false);
       setUsingPlaceholder(false);
 
       const candidates: MediaStreamConstraints[] =
-        to === 'environment'
+        to === "environment"
           ? [
-              { video: { facingMode: { exact: 'environment' } }, audio: false },
-              { video: { facingMode: 'environment' }, audio: false },
+              { video: { facingMode: { exact: "environment" } }, audio: false },
+              { video: { facingMode: "environment" }, audio: false },
               { video: true, audio: false },
             ]
           : [
-              { video: { facingMode: { exact: 'user' } }, audio: false },
-              { video: { facingMode: 'user' }, audio: false },
+              { video: { facingMode: { exact: "user" } }, audio: false },
+              { video: { facingMode: "user" }, audio: false },
               { video: true, audio: false },
             ];
 
       let stream: MediaStream | null = null;
       for (const c of candidates) {
-        try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
-        catch { /* 次の候補へ */ }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(c);
+          break;
+        } catch {
+          /* 次の候補へ */
+        }
       }
       if (!stream) throw new Error("no stream");
 
@@ -102,6 +201,13 @@ export default function App() {
         await videoRef.current.play();
       }
       setReady(true);
+
+      // Torch対応判定
+      const track = stream.getVideoTracks?.()[0];
+      const caps = (track?.getCapabilities?.() as any) || {};
+      if (caps && "torch" in caps) {
+        setTorchSupported(true);
+      }
     } catch {
       setUsingPlaceholder(true);
       setReady(true);
@@ -112,19 +218,54 @@ export default function App() {
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
-  const doCapture = async () => {
-    for (let i = 3; i >= 1; i--) {
-      setCountdown(i);
-      await new Promise((r) => setTimeout(r, 500));
+  // Torch切替
+  const applyTorch = async (on: boolean) => {
+    try {
+      const stream: MediaStream | undefined = (videoRef.current as any)
+        ?.srcObject;
+      const track = stream?.getVideoTracks?.()[0];
+      const caps = (track?.getCapabilities?.() as any) || {};
+      if (!track || !("torch" in caps)) return;
+      await track.applyConstraints({ advanced: [{ torch: on }] as any });
+      setTorchOn(on);
+    } catch {
+      // 失敗時は何もしない
     }
-    setCountdown(0);
+  };
 
+  // 撮影音
+  const playShutter = async () => {
+    if (!shutterSoundOn) return;
+    try {
+      const ctx = new (window.AudioContext ||
+        (window as any).webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "triangle";
+      o.frequency.value = 1100;
+      g.gain.value = 0.05;
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      setTimeout(() => {
+        o.stop();
+        ctx.close();
+      }, 90);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // キャンバスへ描画＆保存
+  const drawAndSave = async (): Promise<Snapshot> => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
 
-    const [w, h] = aspect === "1:1" ? [900, 900] : aspect === "16:9" ? [1280, 720] : [900, 1200];
+    const [w, h] =
+      aspect === "1:1" ? [900, 900] : aspect === "16:9" ? [1280, 720] : [900, 1200];
     canvas.width = w;
     canvas.height = h;
 
@@ -138,14 +279,12 @@ export default function App() {
       const dy = (h - dh) / 2;
 
       if (isMirror) {
-        // 自撮り時は左右反転してから描画
         ctx.save();
         ctx.translate(w, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(videoRef.current!, w - dx - dw, dy, dw, dh);
         ctx.restore();
       } else {
-        // 通常（背面など）
         ctx.drawImage(videoRef.current!, dx, dy, dw, dh);
       }
     } else {
@@ -199,37 +338,107 @@ export default function App() {
       }
     }
 
-    const dataUrl = canvas.toDataURL("image/png");
-    setSnapshots((prev) => [{ url: dataUrl, ts: Date.now() }, ...prev].slice(0, 12));
+    const blob: Blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b as Blob), "image/png")
+    );
+    const url = URL.createObjectURL(blob);
+    const shot: Snapshot = { url, ts: Date.now(), blob };
+    setSnapshots((prev) => [shot, ...prev].slice(0, 12));
+    return shot;
+  };
+
+  const doCapture = async () => {
+    // カウントダウン
+    if (timerSec > 0) {
+      for (let i = timerSec; i >= 1; i--) {
+        setCountdown(i);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      setCountdown(0);
+    }
+
+    await playShutter();
+    // フラッシュ演出
+    setFlashOn(true);
+    setTimeout(() => setFlashOn(false), 140);
+
+    await drawAndSave();
   };
 
   const FrameOverlay = (frames.find((f) => f.id === activeFrame) as any)?.render;
+
+  const shareLast = async () => {
+    const shot = snapshots[0];
+    if (!shot?.blob) return;
+    try {
+      const file = new File([shot.blob], `oshi_${shot.ts}.png`, {
+        type: "image/png",
+      });
+      if ((navigator as any).canShare?.({ files: [file] })) {
+        await (navigator as any).share({
+          files: [file],
+          title: "Oshi Camera",
+          text: "その場でフォトフレーム📸",
+        });
+      } else {
+        // 共有に対応していない場合はダウンロードへフォールバック
+        const a = document.createElement("a");
+        a.href = shot.url;
+        a.download = `oshi_${shot.ts}.png`;
+        a.click();
+      }
+    } catch {
+      // ユーザーキャンセル等は無視
+    }
+  };
+
+  const copyLastToClipboard = async () => {
+    const shot = snapshots[0];
+    if (!shot?.blob) return;
+    try {
+      await (navigator.clipboard as any).write([
+        new (window as any).ClipboardItem({ "image/png": shot.blob }),
+      ]);
+      alert("クリップボードにコピーしました");
+    } catch {
+      alert("コピーに対応していない環境です");
+    }
+  };
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white p-4 sm:p-8">
       <div className="mx-auto max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         <motion.div
           className="lg:col-span-1 bg-slate-800/60 rounded-2xl p-5 sm:p-6 shadow-xl border border-white/10"
-          initial={{opacity:0, y:12}} animate={{opacity:1, y:0}}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
         >
-          <h1 className="text-2xl sm:text-3xl font-bold mb-2">NFC×Web その場でフォトフレーム</h1>
-          <p className="text-slate-300 mb-4">NFCタグでWebアプリを起動し、その場でカメラ撮影→フレーム合成→保存まで行う体験のサンプルです。</p>
+          <h1 className="text-2xl sm:text-3xl font-bold mb-2">
+            NFC×Web その場でフォトフレーム
+          </h1>
+          <p className="text-slate-300 mb-4">
+            NFCタグでWebアプリを起動し、その場でカメラ撮影→フレーム合成→保存/共有まで行う体験のサンプルです。
+          </p>
 
           <div className="space-y-3">
             <Section title="体験フロー">
               <ol className="list-decimal ml-6 space-y-1 text-slate-200">
                 <li>NFCタグタッチ → Webアプリ起動（PWA推奨）</li>
                 <li>カメラ許可 → プレビューにフレーム重畳</li>
-                <li>撮影（カウントダウン対応）</li>
-                <li>端末へ保存 or SNS共有</li>
+                <li>撮影（カウントダウン対応・ガイド表示）</li>
+                <li>端末へ保存 / そのまま共有 / クリップボードコピー</li>
               </ol>
             </Section>
             <Section title="技術構成（簡易）">
               <ul className="list-disc ml-6 space-y-1 text-slate-200">
                 <li>起動: NDEF（URL）/ iOSショートカット / PWA</li>
-                <li>撮影: <code>getUserMedia</code> + <code>Canvas</code></li>
+                <li>
+                  撮影: <code>getUserMedia</code> + <code>Canvas</code>
+                </li>
                 <li>フレーム: Canvas描画 or 透過PNG重畳</li>
-                <li>保存: <code>canvas.toDataURL</code> → ダウンロード</li>
+                <li>
+                  保存/共有: <code>canvas.toBlob</code> + Web Share / Clipboard
+                </li>
               </ul>
             </Section>
             <Section title="商用メモ">
@@ -244,7 +453,8 @@ export default function App() {
 
         <motion.div
           className="lg:col-span-2 bg-slate-800/60 rounded-2xl p-4 sm:p-6 shadow-xl border border-white/10"
-          initial={{opacity:0, y:12}} animate={{opacity:1, y:0}}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
         >
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <select
@@ -253,12 +463,15 @@ export default function App() {
               className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
             >
               {frames.map((f) => (
-                <option key={f.id} value={f.id}>{f.name}</option>
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
               ))}
             </select>
+
             <select
               value={aspect}
-              onChange={(e) => setAspect(e.target.value)}
+              onChange={(e) => setAspect(e.target.value as Settings["aspect"])}
               className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
             >
               <option value="3:4">3:4（スマホ向け）</option>
@@ -268,50 +481,150 @@ export default function App() {
 
             {/* カメラ切替 */}
             <button
-              onClick={() => setFacing(prev => prev === 'user' ? 'environment' : 'user')}
+              onClick={() =>
+                setFacing((prev) => (prev === "user" ? "environment" : "user"))
+              }
               className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
               title="フロント/背面を切り替え"
             >
-              カメラ切替（今：{facing === 'user' ? '自撮り' : '背面'}）
+              カメラ切替（今：{facing === "user" ? "自撮り" : "背面"}）
             </button>
 
-            <button onClick={doCapture} className="rounded-2xl px-4 py-2 bg-emerald-500 hover:bg-emerald-400 font-semibold shadow">
+            {/* タイマー */}
+            <select
+              value={String(timerSec)}
+              onChange={(e) => setTimerSec(Number(e.target.value) as 0 | 3 | 5)}
+              className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
+              title="カウントダウン秒数"
+            >
+              <option value="0">タイマーなし</option>
+              <option value="3">3秒</option>
+              <option value="5">5秒</option>
+            </select>
+
+            {/* ガイド */}
+            <button
+              onClick={() => setGuideOn((v) => !v)}
+              className={`rounded-2xl px-3 py-2 ${
+                guideOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"
+              }`}
+              title="ルールオブサードのガイド表示"
+            >
+              ガイド{guideOn ? "ON" : "OFF"}
+            </button>
+
+            {/* シャッター音 */}
+            <button
+              onClick={() => setShutterSoundOn((v) => !v)}
+              className={`rounded-2xl px-3 py-2 ${
+                shutterSoundOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"
+              }`}
+              title="シャッター音のオン/オフ"
+            >
+              撮影音{shutterSoundOn ? "ON" : "OFF"}
+            </button>
+
+            {/* Torch */}
+            {torchSupported && facing === "environment" && (
+              <button
+                onClick={() => applyTorch(!torchOn)}
+                className={`rounded-2xl px-3 py-2 ${
+                  torchOn ? "bg-amber-600" : "bg-slate-700 hover:bg-slate-600"
+                }`}
+                title="背面ライト"
+              >
+                ライト{torchOn ? "ON" : "OFF"}
+              </button>
+            )}
+
+            <button
+              onClick={doCapture}
+              className="rounded-2xl px-4 py-2 bg-emerald-500 hover:bg-emerald-400 font-semibold shadow"
+            >
               撮影する
             </button>
-            <span className="text-slate-300 text-sm">{usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}</span>
+            <span className="text-slate-300 text-sm">
+              {usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}
+            </span>
           </div>
 
-          <div className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black" style={{aspectRatio: (aspect as any).replace(":", "/")}}>
+          <div
+            className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black"
+            style={{ aspectRatio: (aspect as any).replace(":", "/") }}
+          >
             {!usingPlaceholder ? (
               <video
                 ref={videoRef}
                 playsInline
                 muted
                 className="absolute inset-0 h-full w-full object-cover"
-                style={{ transform: isMirror ? 'scaleX(-1)' : 'none' }}
+                style={{ transform: isMirror ? "scaleX(-1)" : "none" }}
               />
             ) : (
               <div className="absolute inset-0 h-full w-full bg-gradient-to-br from-emerald-300 to-sky-300 grid place-items-center">
-                <div className="text-black/70 font-semibold text-lg">(カメラ権限なしのためダミー表示)</div>
+                <div className="text-black/70 font-semibold text-lg">
+                  (カメラ権限なしのためダミー表示)
+                </div>
               </div>
             )}
 
-            <div className="absolute inset-0">
-              {FrameOverlay && <FrameOverlay />}
-            </div>
+            {/* ガイド */}
+            {guideOn && (
+              <div className="pointer-events-none absolute inset-0">
+                {/* 縦線 */}
+                <div className="absolute inset-y-0 left-1/3 w-px bg-white/40" />
+                <div className="absolute inset-y-0 left-2/3 w-px bg-white/40" />
+                {/* 横線 */}
+                <div className="absolute inset-x-0 top-1/3 h-px bg-white/40" />
+                <div className="absolute inset-x-0 top-2/3 h-px bg-white/40" />
+              </div>
+            )}
 
+            {/* フレーム */}
+            <div className="absolute inset-0">{FrameOverlay && <FrameOverlay />}</div>
+
+            {/* カウントダウン */}
             {countdown > 0 && (
               <div className="absolute inset-0 grid place-items-center">
                 <motion.div
                   key={countdown}
-                  initial={{scale:0.6, opacity:0}}
-                  animate={{scale:1.2, opacity:1}}
+                  initial={{ scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1.2, opacity: 1 }}
                   className="bg-black/40 rounded-full w-28 h-28 grid place-items-center border border-white/30"
                 >
                   <div className="text-5xl font-black">{countdown}</div>
                 </motion.div>
               </div>
             )}
+
+            {/* フラッシュ演出 */}
+            {flashOn && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-white/80"
+              />
+            )}
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={shareLast}
+              disabled={!snapshots.length}
+              className="rounded-xl px-3 py-2 bg-sky-600 disabled:bg-slate-700 disabled:opacity-60"
+              title="直近の1枚を共有"
+            >
+              共有
+            </button>
+            <button
+              onClick={copyLastToClipboard}
+              disabled={!snapshots.length}
+              className="rounded-xl px-3 py-2 bg-slate-600 disabled:bg-slate-700 disabled:opacity-60"
+              title="直近の1枚をクリップボードへ"
+            >
+              コピー
+            </button>
           </div>
 
           <canvas ref={canvasRef} className="hidden" />
@@ -321,8 +634,17 @@ export default function App() {
               <h3 className="font-semibold mb-2">保存候補（直近12件）</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {snapshots.map((s, i) => (
-                  <a key={s.ts + i} href={s.url} download={`oshi_photo_${s.ts}.png`} className="group block">
-                    <img src={s.url} alt="snapshot" className="w-full h-40 object-cover rounded-xl border border-white/10 group-hover:opacity-90" />
+                  <a
+                    key={s.ts + i}
+                    href={s.url}
+                    download={`oshi_photo_${s.ts}.png`}
+                    className="group block"
+                  >
+                    <img
+                      src={s.url}
+                      alt="snapshot"
+                      className="w-full h-40 object-cover rounded-xl border border-white/10 group-hover:opacity-90"
+                    />
                     <div className="text-xs text-slate-300 mt-1">tapで保存</div>
                   </a>
                 ))}
@@ -335,11 +657,21 @@ export default function App() {
   );
 }
 
-function Section({title, children}:{title:string, children:React.ReactNode}){
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="text-sm uppercase tracking-wide text-slate-400 mb-1">{title}</div>
-      <div className="bg-slate-900/40 rounded-xl p-3 border border-white/5">{children}</div>
+      <div className="text-sm uppercase tracking-wide text-slate-400 mb-1">
+        {title}
+      </div>
+      <div className="bg-slate-900/40 rounded-xl p-3 border border-white/5">
+        {children}
+      </div>
     </div>
   );
 }
