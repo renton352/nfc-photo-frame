@@ -1,7 +1,7 @@
 {
-  "name": "キャラクター撮影アプリ",
-  "short_name": "撮影アプリ",
-  "start_url": "/",
+  "name": "NFC Photo Frame",
+  "short_name": "OshiCam",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
