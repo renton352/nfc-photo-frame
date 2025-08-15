@@ -84,8 +84,8 @@ const frames = [
 ];
 
 const SETTINGS_KEY = "oshi.camera.settings.v1";
-// ✅ GH Pagesでも壊れないようにBASE_URLを使う（例: /nfc-photo-frame/）
-const VOICE_URL = `${import.meta.env.BASE_URL}sounds/voice_shutter.mp3`;
+// ✅ Viteのアセット解決を使用してビルドに同梱（GitHub Pagesでも404にならない）
+const VOICE_URL = new URL("./assets/voice_shutter.mp3", import.meta.url).href;
 
 type Settings = {
   activeFrame: string;
@@ -99,7 +99,7 @@ type Settings = {
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const voiceRef = useRef<HTMLAudioElement | null>(null); // 追加済み
+  const voiceRef = useRef<HTMLAudioElement | null>(null);
   const params = useMemo(() => new URLSearchParams(location.search), []);
 
   // URLパラメータ or 保存値 or 既定
@@ -126,7 +126,6 @@ export default function App() {
     3) as Settings["timerSec"];
 
   const [ready, setReady] = useState(false);
-  // ❌ 誤記だった “thed” 行を削除しました
   const [usingPlaceholder, setUsingPlaceholder] = useState(false);
   const [activeFrame, setActiveFrame] = useState(initialFrame);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -219,7 +218,6 @@ export default function App() {
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
   // Torch切替
@@ -246,9 +244,7 @@ export default function App() {
         a.currentTime = 0;
         a.volume = 1.0;
         await a.play();
-        try {
-          (navigator as any).vibrate?.(40);
-        } catch {}
+        try { (navigator as any).vibrate?.(40); } catch {}
         return;
       }
     } catch {
@@ -280,13 +276,9 @@ export default function App() {
       o1.stop(t0 + 0.30);
       o2.stop(t0 + 0.30);
       o2.onended = () => ctx.close();
-      try {
-        (navigator as any).vibrate?.(50);
-      } catch {}
+      try { (navigator as any).vibrate?.(50); } catch {}
     } catch {
-      try {
-        (navigator as any).vibrate?.(60);
-      } catch {}
+      try { (navigator as any).vibrate?.(60); } catch {}
     }
   };
 
@@ -659,7 +651,7 @@ export default function App() {
           </div>
 
           <canvas ref={canvasRef} className="hidden" />
-          {/* 音声ファイル（例: public/sounds/voice_shutter.mp3） */}
+          {/* 音声ファイルを事前プリロード */}
           <audio ref={voiceRef} src={VOICE_URL} preload="auto" playsInline />
 
           {snapshots.length > 0 && (
