@@ -85,8 +85,9 @@ const frames = [
 
 const SETTINGS_KEY = "oshi.camera.settings.v1";
 // それぞれ /assets 配下のMP3/WAV（Viteがビルド時に解決）
-const VOICE_PRE_URL  = new URL("../assets/voice_pre.mp3",  import.meta.url).href;  // 例：「撮るね～」
-const VOICE_POST_URL = new URL("../assets/voice_post.mp3", import.meta.url).href;  // 例：「きれいに撮れたかな？」
+const VOICE_PRE_URL   = new URL("./assets/voice_pre.mp3",   import.meta.url).href;
+const VOICE_POST_URL  = new URL("./assets/voice_post.mp3",  import.meta.url).href;
+const VOICE_FALLBACK  = new URL("./assets/voice_shutter.mp3", import.meta.url).href;
 
 type Settings = {
   activeFrame: string;
