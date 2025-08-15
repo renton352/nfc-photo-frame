@@ -84,7 +84,8 @@ const frames = [
 ];
 
 const SETTINGS_KEY = "oshi.camera.settings.v1";
-const VOICE_URL = "/sounds/voice_shutter.mp3"; // ← WAVでもOK。存在しない場合は自動でビープにフォールバック
+// ✅ GH Pagesでも壊れないようにBASE_URLを使う（例: /nfc-photo-frame/）
+const VOICE_URL = `${import.meta.env.BASE_URL}sounds/voice_shutter.mp3`;
 
 type Settings = {
   activeFrame: string;
@@ -98,7 +99,7 @@ type Settings = {
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const voiceRef = useRef<HTMLAudioElement | null>(null); // ★追加：音声ファイル再生用
+  const voiceRef = useRef<HTMLAudioElement | null>(null); // 追加済み
   const params = useMemo(() => new URLSearchParams(location.search), []);
 
   // URLパラメータ or 保存値 or 既定
@@ -125,21 +126,18 @@ export default function App() {
     3) as Settings["timerSec"];
 
   const [ready, setReady] = useState(false);
-  thed
+  // ❌ 誤記だった “thed” 行を削除しました
   const [usingPlaceholder, setUsingPlaceholder] = useState(false);
   const [activeFrame, setActiveFrame] = useState(initialFrame);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [countdown, setCountdown] = useState(0);
   const [aspect, setAspect] = useState<Settings["aspect"]>(initialAspect);
-  const [facing, setFacing] =
-    useState<Settings["facing"]>(initialFacing);
+  const [facing, setFacing] = useState<Settings["facing"]>(initialFacing);
   const [guideOn, setGuideOn] = useState<boolean>(saved.guideOn ?? false);
   const [shutterSoundOn, setShutterSoundOn] = useState<boolean>(
     saved.shutterSoundOn ?? true
   );
-  const [timerSec, setTimerSec] = useState<Settings["timerSec"]>(
-    initialTimer
-  );
+  const [timerSec, setTimerSec] = useState<Settings["timerSec"]>(initialTimer);
   const [flashOn, setFlashOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -227,8 +225,7 @@ export default function App() {
   // Torch切替
   const applyTorch = async (on: boolean) => {
     try {
-      const stream: MediaStream | undefined = (videoRef.current as any)
-        ?.srcObject;
+      const stream: MediaStream | undefined = (videoRef.current as any)?.srcObject;
       const track = stream?.getVideoTracks?.()[0];
       const caps = (track?.getCapabilities?.() as any) || {};
       if (!track || !("torch" in caps)) return;
@@ -239,58 +236,57 @@ export default function App() {
     }
   };
 
-  // ★修正：シャッター音 > まずは音声ファイルを再生。ダメならビープにフォールバック
+  // シャッター音：まず音声ファイル再生、失敗時はビープ
   const playShutter = async () => {
     if (!shutterSoundOn) return;
-    // 1) 音声ファイル（MP3/WAV）
+    // 1) MP3/WAV
     try {
       const a = voiceRef.current;
       if (a) {
         a.currentTime = 0;
         a.volume = 1.0;
-        await a.play(); // iOSはユーザー操作起点（撮影ボタン）なので再生可
-        try { (navigator as any).vibrate?.(40); } catch {}
+        await a.play();
+        try {
+          (navigator as any).vibrate?.(40);
+        } catch {}
         return;
       }
     } catch {
-      /* 音声再生不可 → ビープへフォールバック */
+      /* 続行してビープ */
     }
-
-    // 2) フォールバック：ビープ（WebAudio）
+    // 2) フォールバック：ビープ
     try {
       const Ctor =
         (window as any).AudioContext || (window as any).webkitAudioContext;
       const ctx = new Ctor();
       if (ctx.state !== "running") await ctx.resume();
-
       const g = ctx.createGain();
       g.connect(ctx.destination);
-
       const o1 = ctx.createOscillator();
       const o2 = ctx.createOscillator();
       o1.type = "square";
       o2.type = "sine";
-
       const t0 = ctx.currentTime;
       o1.frequency.setValueAtTime(1200, t0);
       o2.frequency.setValueAtTime(700, t0 + 0.06);
-
       o1.connect(g);
       o2.connect(g);
-
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.linearRampToValueAtTime(0.5, t0 + 0.02);
       g.gain.exponentialRampToValueAtTime(0.08, t0 + 0.12);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
-
       o1.start(t0);
       o2.start(t0 + 0.06);
       o1.stop(t0 + 0.30);
       o2.stop(t0 + 0.30);
       o2.onended = () => ctx.close();
-      try { (navigator as any).vibrate?.(50); } catch {}
+      try {
+        (navigator as any).vibrate?.(50);
+      } catch {}
     } catch {
-      try { (navigator as any).vibrate?.(60); } catch {}
+      try {
+        (navigator as any).vibrate?.(60);
+      } catch {}
     }
   };
 
@@ -298,13 +294,16 @@ export default function App() {
   const drawAndSave = async (): Promise<Snapshot> => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
-
     const [w, h] =
       aspect === "1:1" ? [900, 900] : aspect === "16:9" ? [1280, 720] : [900, 1200];
     canvas.width = w;
     canvas.height = h;
 
-    if (!usingPlaceholder && videoRef.current && (videoRef.current as any).videoWidth) {
+    if (
+      !usingPlaceholder &&
+      videoRef.current &&
+      (videoRef.current as any).videoWidth
+    ) {
       const vw = (videoRef.current as any).videoWidth;
       const vh = (videoRef.current as any).videoHeight;
       const scale = Math.max(w / vw, h / vh);
@@ -383,7 +382,6 @@ export default function App() {
   };
 
   const doCapture = async () => {
-    // カウントダウン
     if (timerSec > 0) {
       for (let i = timerSec; i >= 1; i--) {
         setCountdown(i);
@@ -392,7 +390,7 @@ export default function App() {
       setCountdown(0);
     }
 
-    await playShutter(); // ← 音声ファイル（撮影するよ～等）or フォールバック
+    await playShutter();
 
     // フラッシュ（0.35秒）
     setFlashOn(true);
@@ -661,7 +659,7 @@ export default function App() {
           </div>
 
           <canvas ref={canvasRef} className="hidden" />
-          {/* ★追加：音声タグ（事前プリロード）。撮影ボタン=ユーザー操作起点なのでiOSでも再生可 */}
+          {/* 音声ファイル（例: public/sounds/voice_shutter.mp3） */}
           <audio ref={voiceRef} src={VOICE_URL} preload="auto" playsInline />
 
           {snapshots.length > 0 && (
