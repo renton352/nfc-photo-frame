@@ -236,28 +236,54 @@ export default function App() {
     }
   };
 
-  // 撮影音
+  // ▼▼▼ 修正1：撮影音（2トーン・iOS対策・バイブ） ▼▼▼
   const playShutter = async () => {
     if (!shutterSoundOn) return;
     try {
-      const ctx = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
-      const o = ctx.createOscillator();
+      const Ctor =
+        (window as any).AudioContext || (window as any).webkitAudioContext;
+      const ctx = new Ctor();
+
+      if (ctx.state !== "running") {
+        await ctx.resume();
+      }
+
       const g = ctx.createGain();
-      o.type = "triangle";
-      o.frequency.value = 1100;
-      g.gain.value = 0.05;
-      o.connect(g);
       g.connect(ctx.destination);
-      o.start();
-      setTimeout(() => {
-        o.stop();
-        ctx.close();
-      }, 90);
+
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      o1.type = "square";
+      o2.type = "sine";
+
+      const t0 = ctx.currentTime;
+      o1.frequency.setValueAtTime(1200, t0);
+      o2.frequency.setValueAtTime(700, t0 + 0.06);
+
+      o1.connect(g);
+      o2.connect(g);
+
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.5, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.08, t0 + 0.12);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
+
+      o1.start(t0);
+      o2.start(t0 + 0.06);
+      o1.stop(t0 + 0.30);
+      o2.stop(t0 + 0.30);
+      o2.onended = () => ctx.close();
+
+      try {
+        (navigator as any).vibrate?.(50);
+      } catch {}
     } catch {
-      /* ignore */
+      try {
+        (navigator as any).vibrate?.(60);
+      } catch {}
     }
   };
+  // ▲▲▲ 修正1 ここまで ▲▲▲
 
   // キャンバスへ描画＆保存
   const drawAndSave = async (): Promise<Snapshot> => {
@@ -358,9 +384,10 @@ export default function App() {
     }
 
     await playShutter();
-    // フラッシュ演出
+    // ▼▼▼ 修正2：フラッシュ時間を延長 ▼▼▼
     setFlashOn(true);
-    setTimeout(() => setFlashOn(false), 140);
+    setTimeout(() => setFlashOn(false), 350);
+    // ▲▲▲ 修正2 ここまで ▲▲▲
 
     await drawAndSave();
   };
@@ -597,15 +624,16 @@ export default function App() {
               </div>
             )}
 
-            {/* フラッシュ演出 */}
+            {/* ▼▼▼ 修正3：フラッシュ演出（白100% + キーフレーム） ▼▼▼ */}
             {flashOn && (
               <motion.div
                 initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-white/80"
+                animate={{ opacity: [0, 1, 0] }}
+                transition={{ duration: 0.35, ease: "easeOut", times: [0, 0.2, 1] }}
+                className="absolute inset-0 bg-white"
               />
             )}
+            {/* ▲▲▲ 修正3 ここまで ▲▲▲ */}
           </div>
 
           <div className="mt-4 flex gap-2">
