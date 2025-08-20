@@ -12,9 +12,9 @@ const frames = [
 const SETTINGS_KEY = "oshi.camera.settings.v1";
 
 // ===== 音源（Vite解決） =====
-const VOICE_PRE_URL    = new URL("./assets/voice_pre.mp3",    import.meta.url).href;
-const VOICE_POST_URL   = new URL("./assets/voice_post.mp3",   import.meta.url).href;
-const VOICE_SHUTTER_URL= new URL("./assets/voice_shutter.mp3",import.meta.url).href; // シャッターSFX兼フォールバック
+const VOICE_PRE_URL     = new URL("./assets/voice_pre.mp3",     import.meta.url).href;
+const VOICE_POST_URL    = new URL("./assets/voice_post.mp3",    import.meta.url).href;
+const VOICE_SHUTTER_URL = new URL("./assets/voice_shutter.mp3", import.meta.url).href; // シャッターSFX兼フォールバック
 
 // ===== PNGフレームのマッピング（src/assets/frames/） =====
 const FRAME_SRC: Record<string, Record<"3:4"|"1:1"|"16:9", string>> = {
@@ -58,7 +58,6 @@ type Settings = {
   charY?: number;        // 位置Y (0–100 %)
   charScale?: number;    // スケール（画面幅比）
   charAngle?: number;    // 角度（deg, -180〜180）
-  charFlip?: boolean;    // 左右反転
 };
 
 export default function App() {
@@ -98,14 +97,12 @@ export default function App() {
 
   const isMirror = facing === "user";
 
-  // ==== キャラ編集状態 ====
+  // ==== キャラ編集状態（常時編集モード） ====
   const [activeChar, setActiveChar]   = useState<"none"|"star"|"cat"|"robot">(saved.activeChar ?? "star");
-  const [charX, setCharX]             = useState<number>(saved.charX ?? 50);     // %
-  const [charY, setCharY]             = useState<number>(saved.charY ?? 74);     // %
+  const [charX, setCharX]             = useState<number>(saved.charX ?? 50);      // %
+  const [charY, setCharY]             = useState<number>(saved.charY ?? 74);      // %
   const [charScale, setCharScale]     = useState<number>(saved.charScale ?? 0.42); // 画面幅の比
-  const [charAngle, setCharAngle]     = useState<number>(saved.charAngle ?? 0);  // deg
-  const [charFlip, setCharFlip]       = useState<boolean>(!!saved.charFlip);
-  const [charEditMode, setCharEditMode] = useState<boolean>(false); // 編集ONでドラッグ/ピンチ
+  const [charAngle, setCharAngle]     = useState<number>(saved.charAngle ?? 0);   // deg
 
   // 編集ジェスチャー用の一時値
   const pointersRef = useRef<Map<number, {x:number,y:number}>>(new Map());
@@ -119,10 +116,10 @@ export default function App() {
   useEffect(() => {
     const s: Settings = {
       activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec,
-      activeChar, charX, charY, charScale, charAngle, charFlip,
+      activeChar, charX, charY, charScale, charAngle,
     };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-  }, [activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec, activeChar, charX, charY, charScale, charAngle, charFlip]);
+  }, [activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec, activeChar, charX, charY, charScale, charAngle]);
 
   // ---- カメラ制御 ----
   const stopStream = () => {
@@ -353,7 +350,6 @@ export default function App() {
           const cy = (charY / 100) * h;
           ctx.save();
           ctx.translate(cx, cy);
-          if (charFlip) ctx.scale(-1, 1);         // CSSと順番を合わせる：flip → rotate
           ctx.rotate((charAngle * Math.PI) / 180);
           ctx.drawImage(ch, -drawW/2, -drawH/2, drawW, drawH);
           ctx.restore();
@@ -440,23 +436,15 @@ export default function App() {
     }
   };
 
-  // ===== キャラ編集ジェスチャー =====
+  // ===== キャラ編集ジェスチャー（常時有効）=====
   const getStageRect = () => stageRef.current?.getBoundingClientRect();
-  const toPercent = (clientX:number, clientY:number) => {
-    const r = getStageRect();
-    if (!r) return { x: charX, y: charY };
-    const x = ((clientX - r.left) / r.width) * 100;
-    const y = ((clientY - r.top) / r.height) * 100;
-    return { x: clamp(x, 0, 100), y: clamp(y, 0, 100) };
-  };
   const dist = (a:{x:number,y:number}, b:{x:number,y:number}) => Math.hypot(a.x-b.x, a.y-b.y);
   const angleDeg = (a:{x:number,y:number}, b:{x:number,y:number}) => (Math.atan2(b.y-a.y, b.x-a.x) * 180) / Math.PI;
   const mid = (a:{x:number,y:number}, b:{x:number,y:number}) => ({ x:(a.x+b.x)/2, y:(a.y+b.y)/2 });
 
   const onPointerDownStage: React.PointerEventHandler<HTMLDivElement> = (e) => {
-    if (!charEditMode || activeChar === "none") return;
+    if (activeChar === "none") return;
     e.preventDefault();
-    const r = getStageRect(); if (!r) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const p = { x: e.clientX, y: e.clientY };
     pointersRef.current.set(e.pointerId, p);
@@ -468,6 +456,7 @@ export default function App() {
     } else if (pointersRef.current.size === 2) {
       // 2本指 → ピンチ/回転
       const [p1, p2] = Array.from(pointersRef.current.values());
+      const r = getStageRect(); if (!r) return;
       pinchStartRef.current = {
         dist: dist(p1, p2),
         angle: angleDeg(p1, p2),
@@ -480,17 +469,18 @@ export default function App() {
   };
 
   const onPointerMoveStage: React.PointerEventHandler<HTMLDivElement> = (e) => {
-    if (!charEditMode || activeChar === "none") return;
+    if (activeChar === "none") return;
     if (!pointersRef.current.has(e.pointerId)) return;
     e.preventDefault();
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    const r = getStageRect(); if (!r) return;
 
     if (pointersRef.current.size === 1 && dragStartRef.current) {
       // ドラッグ：位置更新
       const p0 = dragStartRef.current;
       const dx = e.clientX - p0.x;
       const dy = e.clientY - p0.y;
-      const r = getStageRect(); if (!r) return;
       const nx = clamp(p0.charX + (dx / r.width) * 100, 0, 100);
       const ny = clamp(p0.charY + (dy / r.height) * 100, 0, 100);
       setCharX(nx); setCharY(ny);
@@ -507,11 +497,9 @@ export default function App() {
 
       // 中点に追従（自然な操作感）
       const m = mid(a, b);
-      const r = getStageRect(); if (r) {
-        const nx = clamp(((m.x - r.left) / r.width) * 100, 0, 100);
-        const ny = clamp(((m.y - r.top) / r.height) * 100, 0, 100);
-        setCharX(nx); setCharY(ny);
-      }
+      const nx = clamp(((m.x - r.left) / r.width) * 100, 0, 100);
+      const ny = clamp(((m.y - r.top) / r.height) * 100, 0, 100);
+      setCharX(nx); setCharY(ny);
     }
   };
 
@@ -546,15 +534,6 @@ export default function App() {
           </p>
 
           <div className="space-y-3">
-            <Section title="体験フロー">
-              <ol className="list-decimal ml-6 space-y-1 text-slate-200">
-                <li>NFCタグタッチ → Webアプリ起動（PWA推奨）</li>
-                <li>カメラ許可 → プレビューにフレーム/キャラ重畳</li>
-                <li>撮影（セリフ→カウントダウン→フラッシュ＋シャッター→後セリフ）</li>
-                <li>端末へ保存 / そのまま共有 / クリップボードコピー</li>
-              </ol>
-            </Section>
-
             <Section title="フレーム / アスペクト / カメラ">
               <div className="flex flex-wrap items-center gap-3">
                 <select
@@ -628,60 +607,26 @@ export default function App() {
                   <option value="robot">🤖 Robot</option>
                 </select>
 
-                <label className="text-sm text-slate-300">
-                  サイズ
-                  <input
-                    type="range" min={0.1} max={1.6} step={0.02}
-                    value={charScale}
-                    onChange={(e)=>setCharScale(clamp(parseFloat(e.target.value), 0.1, 1.6))}
-                    className="mx-2 align-middle"
-                  />
-                </label>
-
-                <label className="text-sm text-slate-300">
-                  角度
-                  <input
-                    type="range" min={-180} max={180} step={1}
-                    value={charAngle}
-                    onChange={(e)=>setCharAngle(normAngle(parseFloat(e.target.value)))}
-                    className="mx-2 align-middle"
-                  />
-                  <span className="ml-1 text-slate-400">{Math.round(charAngle)}°</span>
-                </label>
-
-                <button
-                  onClick={()=>setCharFlip(f=>!f)}
-                  className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
-                  title="左右反転"
-                >
-                  左右反転
-                </button>
-
-                <button
-                  onClick={()=>setCharEditMode(m=>!m)}
-                  className={`rounded-2xl px-3 py-2 ${charEditMode ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"}`}
-                  title="タッチで移動/ピンチ回転/ピンチ拡大"
-                >
-                  編集モード{charEditMode ? "ON" : "OFF"}
-                </button>
-
                 <button
                   onClick={()=>{
-                    setCharX(50); setCharY(74); setCharScale(0.42); setCharAngle(0); setCharFlip(false);
+                    setCharX(50); setCharY(74); setCharScale(0.42); setCharAngle(0);
                   }}
                   className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
                 >
-                  リセット
+                  位置リセット
                 </button>
+
+                <span className="text-slate-400 text-sm">
+                  ※ 画面上でドラッグ移動・2本指で拡大回転できます
+                </span>
               </div>
             </Section>
 
-            <Section title="サウンド">
+            <Section title="サウンド / 撮影">
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => setShutterSoundOn((v) => !v)}
                   className={`rounded-2xl px-3 py-2 ${shutterSoundOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"}`}
-                  title="セリフ/効果音のオン/オフ"
                 >
                   セリフ/効果音{shutterSoundOn ? "ON" : "OFF"}
                 </button>
@@ -704,7 +649,7 @@ export default function App() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          {/* === プレビュー領域 === */}
+          {/* === プレビュー領域（常時編集可） === */}
           <div
             ref={stageRef}
             className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black touch-none select-none"
@@ -750,7 +695,7 @@ export default function App() {
                   left: `${charX}%`,
                   top: `${charY}%`,
                   width: `${charScale*100}%`,
-                  transform: `translate(-50%, -50%) ${charFlip ? "scaleX(-1)" : ""} rotate(${charAngle}deg)`,
+                  transform: `translate(-50%, -50%) rotate(${charAngle}deg)`,
                   pointerEvents: "none",
                 }}
               />
@@ -767,11 +712,6 @@ export default function App() {
                 />
               ) : null;
             })()}
-
-            {/* 編集モード中は透明オーバーレイで操作（onPointer*はdivに付与済み） */}
-            {charEditMode && (
-              <div className="absolute inset-0 cursor-move" />
-            )}
 
             {/* カウントダウン */}
             {countdown > 0 && (
