@@ -10,13 +10,13 @@ const frames = [
 ];
 
 const SETTINGS_KEY = "oshi.camera.settings.v1";
-// それぞれ /assets 配下のMP3/WAV（Viteがビルド時に解決）
-const VOICE_PRE_URL   = new URL("./assets/voice_pre.mp3",   import.meta.url).href;
-const VOICE_POST_URL  = new URL("./assets/voice_post.mp3",  import.meta.url).href;
-// シャッター音には既存の fallback 音源を使います
-const VOICE_FALLBACK  = new URL("./assets/voice_shutter.mp3", import.meta.url).href;
 
-// ★ 追加：PNGフレームのマッピング（src/assets/frames/）
+// ===== 音源（Vite解決） =====
+const VOICE_PRE_URL    = new URL("./assets/voice_pre.mp3",    import.meta.url).href;
+const VOICE_POST_URL   = new URL("./assets/voice_post.mp3",   import.meta.url).href;
+const VOICE_SHUTTER_URL= new URL("./assets/voice_shutter.mp3",import.meta.url).href; // シャッターSFX兼フォールバック
+
+// ===== PNGフレームのマッピング（src/assets/frames/） =====
 const FRAME_SRC: Record<string, Record<"3:4"|"1:1"|"16:9", string>> = {
   sparkle: {
     "3:4":  new URL("./assets/frames/sparkle_3x4.png",  import.meta.url).href,
@@ -37,6 +37,13 @@ const FRAME_SRC: Record<string, Record<"3:4"|"1:1"|"16:9", string>> = {
 const getOverlaySrc = (frameId: string, aspect: "3:4"|"1:1"|"16:9") =>
   FRAME_SRC[frameId]?.[aspect];
 
+// ===== キャラ画像のマッピング（src/assets/characters/） =====
+const CHAR_SRC: Record<"star"|"cat"|"robot", string> = {
+  star:  new URL("./assets/characters/chara_star.png",  import.meta.url).href,
+  cat:   new URL("./assets/characters/chara_cat.png",   import.meta.url).href,
+  robot: new URL("./assets/characters/chara_robot.png", import.meta.url).href,
+};
+
 type Settings = {
   activeFrame: string;
   aspect: "3:4" | "1:1" | "16:9";
@@ -44,11 +51,20 @@ type Settings = {
   guideOn: boolean;
   shutterSoundOn: boolean;
   timerSec: 0 | 3 | 5;
+
+  // ▼ キャラ設定（保存対象）
+  activeChar?: "none"|"star"|"cat"|"robot";
+  charX?: number;        // 位置X (0–100 %)
+  charY?: number;        // 位置Y (0–100 %)
+  charScale?: number;    // スケール（画面幅比）
+  charAngle?: number;    // 角度（deg, -180〜180）
+  charFlip?: boolean;    // 左右反転
 };
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null); // プレビュー領域
   const voicePreRef = useRef<HTMLAudioElement | null>(null);
   const voicePostRef = useRef<HTMLAudioElement | null>(null);
   const voiceShutterRef = useRef<HTMLAudioElement | null>(null); // シャッターSFX
@@ -65,6 +81,7 @@ export default function App() {
   const initialFacing = (saved.facing || "user") as Settings["facing"];
   const initialTimer = (Number(params.get("timer")) || saved.timerSec || 3) as Settings["timerSec"];
 
+  // ==== 既存のUI状態 ====
   const [ready, setReady] = useState(false);
   const [usingPlaceholder, setUsingPlaceholder] = useState(false);
   const [activeFrame, setActiveFrame] = useState(initialFrame);
@@ -81,11 +98,31 @@ export default function App() {
 
   const isMirror = facing === "user";
 
-  // ---- 保存 ----
+  // ==== キャラ編集状態 ====
+  const [activeChar, setActiveChar]   = useState<"none"|"star"|"cat"|"robot">(saved.activeChar ?? "star");
+  const [charX, setCharX]             = useState<number>(saved.charX ?? 50);     // %
+  const [charY, setCharY]             = useState<number>(saved.charY ?? 74);     // %
+  const [charScale, setCharScale]     = useState<number>(saved.charScale ?? 0.42); // 画面幅の比
+  const [charAngle, setCharAngle]     = useState<number>(saved.charAngle ?? 0);  // deg
+  const [charFlip, setCharFlip]       = useState<boolean>(!!saved.charFlip);
+  const [charEditMode, setCharEditMode] = useState<boolean>(false); // 編集ONでドラッグ/ピンチ
+
+  // 編集ジェスチャー用の一時値
+  const pointersRef = useRef<Map<number, {x:number,y:number}>>(new Map());
+  const dragStartRef = useRef<{x:number,y:number,charX:number,charY:number} | null>(null);
+  const pinchStartRef = useRef<{
+    dist:number, angle:number, mid:{x:number,y:number},
+    scale:number, rotation:number
+  } | null>(null);
+
+  // ---- 設定保存 ----
   useEffect(() => {
-    const s: Settings = { activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec };
+    const s: Settings = {
+      activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec,
+      activeChar, charX, charY, charScale, charAngle, charFlip,
+    };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-  }, [activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec]);
+  }, [activeFrame, aspect, facing, guideOn, shutterSoundOn, timerSec, activeChar, charX, charY, charScale, charAngle, charFlip]);
 
   // ---- カメラ制御 ----
   const stopStream = () => {
@@ -158,7 +195,7 @@ export default function App() {
   // ====== 再生ヘルパー群 ======
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  // ユーザー操作直後に“無音ワンプレイ”して解錠（iOS対策）
+  // iOS対策：ユーザー操作直後に“無音ワンプレイ”して解錠
   const primeAudio = async (el: HTMLAudioElement | null) => {
     if (!el) return;
     try {
@@ -173,11 +210,7 @@ export default function App() {
     }
   };
 
-  /**
-   * 音声再生（必要なら終了まで/または上限msまで待つ）
-   * - waitEnd: true なら ended まで待機
-   * - maxWaitMs: 上限ミリ秒（超えたら一旦停止して次へ進む）
-   */
+  /** 音声再生（必要なら終了まで/または上限msまで待つ） */
   const playVoice = async (
     el: HTMLAudioElement | null,
     opts: { waitEnd?: boolean; maxWaitMs?: number } = {}
@@ -190,7 +223,7 @@ export default function App() {
 
     const NO_SOURCE = 3 as number;
     if ((el as any).error || el.networkState === NO_SOURCE) {
-      try { el.src = VOICE_FALLBACK; el.load(); } catch {}
+      try { el.src = VOICE_SHUTTER_URL; el.load(); } catch {}
     }
 
     if (!Number.isFinite(el.duration) || el.duration <= 0) {
@@ -229,9 +262,8 @@ export default function App() {
       return true;
     } catch {
       try {
-        if (el.src !== VOICE_FALLBACK) {
-          el.src = VOICE_FALLBACK; el.load(); await el.play();
-
+        if (el.src !== VOICE_SHUTTER_URL) {
+          el.src = VOICE_SHUTTER_URL; el.load(); await el.play();
           if (opts.waitEnd) {
             const ms = Number.isFinite(el.duration)
               ? Math.max(0, (el.duration - el.currentTime) * 1000) + 120
@@ -268,7 +300,16 @@ export default function App() {
     }
   };
 
-  // キャンバスへ描画＆保存
+  // ====== 便利関数 ======
+  const clamp = (v:number,min:number,max:number)=>Math.max(min,Math.min(max,v));
+  const normAngle = (deg:number) => {
+    let d = deg;
+    while (d > 180) d -= 360;
+    while (d < -180) d += 360;
+    return d;
+  };
+
+  // ====== Canvas 保存 ======
   const drawAndSave = async (): Promise<Snapshot> => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
@@ -298,7 +339,29 @@ export default function App() {
       ctx.fillText("(Camera preview placeholder)", w / 2, h / 2);
     }
 
-    // ★ 置き換え：Canvas に PNG フレームを合成
+    // ① キャラ合成（フレームより下）
+    try {
+      if (activeChar !== "none") {
+        const src = CHAR_SRC[activeChar];
+        if (src) {
+          const ch = new Image();
+          ch.src = src;
+          await new Promise<void>((ok) => { ch.onload = () => ok(); ch.onerror = () => ok(); });
+          const drawW = w * charScale;
+          const drawH = drawW * (ch.height / ch.width);
+          const cx = (charX / 100) * w;
+          const cy = (charY / 100) * h;
+          ctx.save();
+          ctx.translate(cx, cy);
+          if (charFlip) ctx.scale(-1, 1);         // CSSと順番を合わせる：flip → rotate
+          ctx.rotate((charAngle * Math.PI) / 180);
+          ctx.drawImage(ch, -drawW/2, -drawH/2, drawW, drawH);
+          ctx.restore();
+        }
+      }
+    } catch {}
+
+    // ② PNGフレーム合成（最前面）
     try {
       const src = getOverlaySrc(activeFrame, aspect);
       if (src) {
@@ -306,7 +369,7 @@ export default function App() {
         overlay.src = src;
         await new Promise<void>((ok) => {
           overlay.onload = () => ok();
-          overlay.onerror = () => ok(); // 無くても続行
+          overlay.onerror = () => ok();
         });
         ctx.drawImage(overlay, 0, 0, w, h);
       }
@@ -321,12 +384,12 @@ export default function App() {
     return shot;
   };
 
-  // —— シーケンス —— 前セリフ → カウントダウン → フラッシュ＆保存(＋同時シャッター音) → 後セリフ
+  // —— シーケンス —— 前セリフ → カウントダウン → フラッシュ＆保存(＋同時シャッター) → 後セリフ
   const doCapture = async () => {
     await primeAudio(voiceShutterRef.current);
     await primeAudio(voicePostRef.current);
 
-    await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 30000 });
+    await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 3000 });
 
     if (timerSec > 0) {
       for (let i = timerSec; i >= 1; i--) {
@@ -345,6 +408,7 @@ export default function App() {
     await playVoice(voicePostRef.current);
   };
 
+  // ===== 共有/コピー =====
   const shareLast = async () => {
     const shot = snapshots[0];
     if (!shot?.blob) return;
@@ -376,6 +440,96 @@ export default function App() {
     }
   };
 
+  // ===== キャラ編集ジェスチャー =====
+  const getStageRect = () => stageRef.current?.getBoundingClientRect();
+  const toPercent = (clientX:number, clientY:number) => {
+    const r = getStageRect();
+    if (!r) return { x: charX, y: charY };
+    const x = ((clientX - r.left) / r.width) * 100;
+    const y = ((clientY - r.top) / r.height) * 100;
+    return { x: clamp(x, 0, 100), y: clamp(y, 0, 100) };
+  };
+  const dist = (a:{x:number,y:number}, b:{x:number,y:number}) => Math.hypot(a.x-b.x, a.y-b.y);
+  const angleDeg = (a:{x:number,y:number}, b:{x:number,y:number}) => (Math.atan2(b.y-a.y, b.x-a.x) * 180) / Math.PI;
+  const mid = (a:{x:number,y:number}, b:{x:number,y:number}) => ({ x:(a.x+b.x)/2, y:(a.y+b.y)/2 });
+
+  const onPointerDownStage: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (!charEditMode || activeChar === "none") return;
+    e.preventDefault();
+    const r = getStageRect(); if (!r) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const p = { x: e.clientX, y: e.clientY };
+    pointersRef.current.set(e.pointerId, p);
+
+    if (pointersRef.current.size === 1) {
+      // 1本指 → ドラッグ開始
+      dragStartRef.current = { x: p.x, y: p.y, charX, charY };
+      pinchStartRef.current = null;
+    } else if (pointersRef.current.size === 2) {
+      // 2本指 → ピンチ/回転
+      const [p1, p2] = Array.from(pointersRef.current.values());
+      pinchStartRef.current = {
+        dist: dist(p1, p2),
+        angle: angleDeg(p1, p2),
+        mid: mid(p1, p2),
+        scale: charScale,
+        rotation: charAngle,
+      };
+      dragStartRef.current = null;
+    }
+  };
+
+  const onPointerMoveStage: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (!charEditMode || activeChar === "none") return;
+    if (!pointersRef.current.has(e.pointerId)) return;
+    e.preventDefault();
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 1 && dragStartRef.current) {
+      // ドラッグ：位置更新
+      const p0 = dragStartRef.current;
+      const dx = e.clientX - p0.x;
+      const dy = e.clientY - p0.y;
+      const r = getStageRect(); if (!r) return;
+      const nx = clamp(p0.charX + (dx / r.width) * 100, 0, 100);
+      const ny = clamp(p0.charY + (dy / r.height) * 100, 0, 100);
+      setCharX(nx); setCharY(ny);
+    } else if (pointersRef.current.size >= 2 && pinchStartRef.current) {
+      // ピンチ/回転：スケールと角度、位置を更新
+      const [a, b] = Array.from(pointersRef.current.values());
+      const ps = pinchStartRef.current;
+      const curDist = dist(a, b);
+      const curAng  = angleDeg(a, b);
+      const scaleFactor = curDist / Math.max(1, ps.dist);
+      setCharScale(clamp(ps.scale * scaleFactor, 0.1, 1.6));
+      const deltaAng = curAng - ps.angle;
+      setCharAngle(normAngle(ps.rotation + deltaAng));
+
+      // 中点に追従（自然な操作感）
+      const m = mid(a, b);
+      const r = getStageRect(); if (r) {
+        const nx = clamp(((m.x - r.left) / r.width) * 100, 0, 100);
+        const ny = clamp(((m.y - r.top) / r.height) * 100, 0, 100);
+        setCharX(nx); setCharY(ny);
+      }
+    }
+  };
+
+  const endPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size === 0) {
+      dragStartRef.current = null;
+      pinchStartRef.current = null;
+    } else if (pointersRef.current.size === 1) {
+      // 2→1本になったら、残った1本でドラッグ継続できるよう初期化
+      const p = Array.from(pointersRef.current.values())[0];
+      dragStartRef.current = { x: p.x, y: p.y, charX, charY };
+      pinchStartRef.current = null;
+    }
+  };
+
+  // ===== UI =====
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-slate-900 via-slate-900 to-slate-800 text-white p-4 sm:p-8">
       <div className="mx-auto max-w-7xl grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -395,25 +549,152 @@ export default function App() {
             <Section title="体験フロー">
               <ol className="list-decimal ml-6 space-y-1 text-slate-200">
                 <li>NFCタグタッチ → Webアプリ起動（PWA推奨）</li>
-                <li>カメラ許可 → プレビューにフレーム重畳</li>
-                <li>撮影（カウントダウン対応・ガイド表示）</li>
+                <li>カメラ許可 → プレビューにフレーム/キャラ重畳</li>
+                <li>撮影（セリフ→カウントダウン→フラッシュ＋シャッター→後セリフ）</li>
                 <li>端末へ保存 / そのまま共有 / クリップボードコピー</li>
               </ol>
             </Section>
-            <Section title="技術構成（簡易）">
-              <ul className="list-disc ml-6 space-y-1 text-slate-200">
-                <li>起動: NDEF（URL）/ iOSショートカット / PWA</li>
-                <li>撮影: <code>getUserMedia</code> + <code>Canvas</code></li>
-                <li>フレーム: 透過PNG重畳</li>
-                <li>保存/共有: <code>canvas.toBlob</code> + Web Share / Clipboard</li>
-              </ul>
+
+            <Section title="フレーム / アスペクト / カメラ">
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={activeFrame}
+                  onChange={(e) => setActiveFrame(e.target.value)}
+                  className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
+                >
+                  {frames.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={aspect}
+                  onChange={(e) => setAspect(e.target.value as Settings["aspect"])}
+                  className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
+                >
+                  <option value="3:4">3:4（スマホ向け）</option>
+                  <option value="1:1">1:1（SNS向け）</option>
+                  <option value="16:9">16:9（横長）</option>
+                </select>
+
+                <button
+                  onClick={() => setFacing((prev) => (prev === "user" ? "environment" : "user"))}
+                  className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
+                >
+                  カメラ切替（今：{facing === "user" ? "自撮り" : "背面"}）
+                </button>
+
+                <select
+                  value={String(timerSec)}
+                  onChange={(e) => setTimerSec(Number(e.target.value) as 0 | 3 | 5)}
+                  className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
+                  title="カウントダウン秒数"
+                >
+                  <option value="0">タイマーなし</option>
+                  <option value="3">3秒</option>
+                  <option value="5">5秒</option>
+                </select>
+
+                <button
+                  onClick={() => setGuideOn((v) => !v)}
+                  className={`rounded-2xl px-3 py-2 ${guideOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"}`}
+                  title="ルールオブサードのガイド表示"
+                >
+                  ガイド{guideOn ? "ON" : "OFF"}
+                </button>
+
+                {torchSupported && facing === "environment" && (
+                  <button
+                    onClick={() => applyTorch(!torchOn)}
+                    className={`rounded-2xl px-3 py-2 ${torchOn ? "bg-amber-600" : "bg-slate-700 hover:bg-slate-600"}`}
+                    title="背面ライト"
+                  >
+                    ライト{torchOn ? "ON" : "OFF"}
+                  </button>
+                )}
+              </div>
             </Section>
-            <Section title="商用メモ">
-              <ul className="list-disc ml-6 space-y-1 text-slate-200">
-                <li>HTTPS必須（カメラ利用）</li>
-                <li>個人情報配慮：原則サーバー保存なし</li>
-                <li>IP案件：フレーム差し替えで量産</li>
-              </ul>
+
+            <Section title="キャラクター">
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={activeChar}
+                  onChange={(e)=>setActiveChar(e.target.value as any)}
+                  className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
+                >
+                  <option value="none">キャラなし</option>
+                  <option value="star">⭐ Star</option>
+                  <option value="cat">🐱 Cat</option>
+                  <option value="robot">🤖 Robot</option>
+                </select>
+
+                <label className="text-sm text-slate-300">
+                  サイズ
+                  <input
+                    type="range" min={0.1} max={1.6} step={0.02}
+                    value={charScale}
+                    onChange={(e)=>setCharScale(clamp(parseFloat(e.target.value), 0.1, 1.6))}
+                    className="mx-2 align-middle"
+                  />
+                </label>
+
+                <label className="text-sm text-slate-300">
+                  角度
+                  <input
+                    type="range" min={-180} max={180} step={1}
+                    value={charAngle}
+                    onChange={(e)=>setCharAngle(normAngle(parseFloat(e.target.value)))}
+                    className="mx-2 align-middle"
+                  />
+                  <span className="ml-1 text-slate-400">{Math.round(charAngle)}°</span>
+                </label>
+
+                <button
+                  onClick={()=>setCharFlip(f=>!f)}
+                  className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
+                  title="左右反転"
+                >
+                  左右反転
+                </button>
+
+                <button
+                  onClick={()=>setCharEditMode(m=>!m)}
+                  className={`rounded-2xl px-3 py-2 ${charEditMode ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"}`}
+                  title="タッチで移動/ピンチ回転/ピンチ拡大"
+                >
+                  編集モード{charEditMode ? "ON" : "OFF"}
+                </button>
+
+                <button
+                  onClick={()=>{
+                    setCharX(50); setCharY(74); setCharScale(0.42); setCharAngle(0); setCharFlip(false);
+                  }}
+                  className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
+                >
+                  リセット
+                </button>
+              </div>
+            </Section>
+
+            <Section title="サウンド">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setShutterSoundOn((v) => !v)}
+                  className={`rounded-2xl px-3 py-2 ${shutterSoundOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"}`}
+                  title="セリフ/効果音のオン/オフ"
+                >
+                  セリフ/効果音{shutterSoundOn ? "ON" : "OFF"}
+                </button>
+                <button
+                  onClick={doCapture}
+                  className="rounded-2xl px-4 py-2 bg-emerald-500 hover:bg-emerald-400 font-semibold shadow"
+                >
+                  撮影する
+                </button>
+                <span className="text-slate-300 text-sm">
+                  {usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}
+                </span>
+              </div>
             </Section>
           </div>
         </motion.div>
@@ -423,99 +704,15 @@ export default function App() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
         >
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <select
-              value={activeFrame}
-              onChange={(e) => setActiveFrame(e.target.value)}
-              className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
-            >
-              {frames.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={aspect}
-              onChange={(e) => setAspect(e.target.value as Settings["aspect"])}
-              className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
-            >
-              <option value="3:4">3:4（スマホ向け）</option>
-              <option value="1:1">1:1（SNS向け）</option>
-              <option value="16:9">16:9（横長）</option>
-            </select>
-
-            {/* カメラ切替 */}
-            <button
-              onClick={() => setFacing((prev) => (prev === "user" ? "environment" : "user"))}
-              className="rounded-2xl px-3 py-2 bg-slate-700 hover:bg-slate-600"
-              title="フロント/背面を切り替え"
-            >
-              カメラ切替（今：{facing === "user" ? "自撮り" : "背面"}）
-            </button>
-
-            {/* タイマー */}
-            <select
-              value={String(timerSec)}
-              onChange={(e) => setTimerSec(Number(e.target.value) as 0 | 3 | 5)}
-              className="rounded-xl bg-slate-700/70 border border-white/10 px-3 py-2"
-              title="カウントダウン秒数"
-            >
-              <option value="0">タイマーなし</option>
-              <option value="3">3秒</option>
-              <option value="5">5秒</option>
-            </select>
-
-            {/* ガイド */}
-            <button
-              onClick={() => setGuideOn((v) => !v)}
-              className={`rounded-2xl px-3 py-2 ${
-                guideOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"
-              }`}
-              title="ルールオブサードのガイド表示"
-            >
-              ガイド{guideOn ? "ON" : "OFF"}
-            </button>
-
-            {/* セリフ/効果音 ON/OFF */}
-            <button
-              onClick={() => setShutterSoundOn((v) => !v)}
-              className={`rounded-2xl px-3 py-2 ${
-                shutterSoundOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"
-              }`}
-              title="セリフ/効果音のオン/オフ"
-            >
-              セリフ/効果音{shutterSoundOn ? "ON" : "OFF"}
-            </button>
-
-            {/* Torch */}
-            {torchSupported && facing === "environment" && (
-              <button
-                onClick={() => applyTorch(!torchOn)}
-                className={`rounded-2xl px-3 py-2 ${
-                  torchOn ? "bg-amber-600" : "bg-slate-700 hover:bg-slate-600"
-                }`}
-                title="背面ライト"
-              >
-                ライト{torchOn ? "ON" : "OFF"}
-              </button>
-            )}
-
-            <button
-              onClick={doCapture}
-              className="rounded-2xl px-4 py-2 bg-emerald-500 hover:bg-emerald-400 font-semibold shadow"
-            >
-              撮影する
-            </button>
-            <span className="text-slate-300 text-sm">
-              {usingPlaceholder ? "※プレビューはダミー背景です" : ready ? "カメラ準備OK" : "準備中…"}
-            </span>
-          </div>
-
+          {/* === プレビュー領域 === */}
           <div
-            className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black"
+            ref={stageRef}
+            className="relative aspect-[3/4] w-full overflow-hidden rounded-3xl bg-black touch-none select-none"
             style={{ aspectRatio: (aspect as any).replace(":", "/") }}
+            onPointerDown={onPointerDownStage}
+            onPointerMove={onPointerMoveStage}
+            onPointerUp={endPointer}
+            onPointerCancel={endPointer}
           >
             {!usingPlaceholder ? (
               <video
@@ -543,7 +740,23 @@ export default function App() {
               </div>
             )}
 
-            {/* ★ PNGフレーム重畳（プレビュー） */}
+            {/* キャラ（プレビュー） */}
+            {activeChar!=="none" && (
+              <img
+                src={CHAR_SRC[activeChar]}
+                alt=""
+                className="absolute"
+                style={{
+                  left: `${charX}%`,
+                  top: `${charY}%`,
+                  width: `${charScale*100}%`,
+                  transform: `translate(-50%, -50%) ${charFlip ? "scaleX(-1)" : ""} rotate(${charAngle}deg)`,
+                  pointerEvents: "none",
+                }}
+              />
+            )}
+
+            {/* PNGフレーム（最前面） */}
             {(() => {
               const src = getOverlaySrc(activeFrame, aspect);
               return src ? (
@@ -554,8 +767,38 @@ export default function App() {
                 />
               ) : null;
             })()}
+
+            {/* 編集モード中は透明オーバーレイで操作（onPointer*はdivに付与済み） */}
+            {charEditMode && (
+              <div className="absolute inset-0 cursor-move" />
+            )}
+
+            {/* カウントダウン */}
+            {countdown > 0 && (
+              <div className="absolute inset-0 grid place-items-center">
+                <motion.div
+                  key={countdown}
+                  initial={{ scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1.2, opacity: 1 }}
+                  className="bg-black/40 rounded-full w-28 h-28 grid place-items-center border border-white/30"
+                >
+                  <div className="text-5xl font-black">{countdown}</div>
+                </motion.div>
+              </div>
+            )}
+
+            {/* フラッシュ */}
+            {flashOn && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0, 1, 0] }}
+                transition={{ duration: 0.35, ease: "easeOut", times: [0, 0.2, 1] }}
+                className="absolute inset-0 bg-white"
+              />
+            )}
           </div>
 
+          {/* 共有/コピー */}
           <div className="mt-4 flex gap-2">
             <button
               onClick={shareLast}
@@ -575,12 +818,7 @@ export default function App() {
             </button>
           </div>
 
-          <canvas ref={canvasRef} className="hidden" />
-          {/* 音源たち */}
-          <audio ref={voicePreRef}     src={VOICE_PRE_URL}  preload="auto" playsInline />
-          <audio ref={voiceShutterRef} src={VOICE_FALLBACK} preload="auto" playsInline />
-          <audio ref={voicePostRef}    src={VOICE_POST_URL} preload="auto" playsInline />
-
+          {/* サムネ一覧 */}
           {snapshots.length > 0 && (
             <div className="mt-5">
               <h3 className="font-semibold mb-2">保存候補（直近12件）</h3>
@@ -603,6 +841,12 @@ export default function App() {
               </div>
             </div>
           )}
+
+          <canvas ref={canvasRef} className="hidden" />
+          {/* 音源たち */}
+          <audio ref={voicePreRef}     src={VOICE_PRE_URL}     preload="auto" playsInline />
+          <audio ref={voiceShutterRef} src={VOICE_SHUTTER_URL} preload="auto" playsInline />
+          <audio ref={voicePostRef}    src={VOICE_POST_URL}    preload="auto" playsInline />
         </motion.div>
       </div>
     </div>
