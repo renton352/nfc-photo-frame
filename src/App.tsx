@@ -87,6 +87,7 @@ const SETTINGS_KEY = "oshi.camera.settings.v1";
 // それぞれ /assets 配下のMP3/WAV（Viteがビルド時に解決）
 const VOICE_PRE_URL   = new URL("./assets/voice_pre.mp3",   import.meta.url).href;
 const VOICE_POST_URL  = new URL("./assets/voice_post.mp3",  import.meta.url).href;
+// シャッター音には既存の fallback 音源を使います
 const VOICE_FALLBACK  = new URL("./assets/voice_shutter.mp3", import.meta.url).href;
 
 type Settings = {
@@ -103,6 +104,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const voicePreRef = useRef<HTMLAudioElement | null>(null);
   const voicePostRef = useRef<HTMLAudioElement | null>(null);
+  const voiceShutterRef = useRef<HTMLAudioElement | null>(null); // ★追加：シャッターSFX
   const params = useMemo(() => new URLSearchParams(location.search), []);
 
   // URLパラメータ or 保存値 or 既定
@@ -214,8 +216,23 @@ export default function App() {
     } catch {}
   };
 
-  // ====== ここから変更①：playVoice を上限付き待機に差し替え ======
+  // ====== 再生ヘルパー群 ======
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // ★追加：ユーザー操作直後に“無音ワンプレイ”して解錠（iOS対策）
+  const primeAudio = async (el: HTMLAudioElement | null) => {
+    if (!el) return;
+    try {
+      el.muted = true;
+      el.currentTime = 0;
+      await el.play();
+      await sleep(50);
+      el.pause();
+      el.currentTime = 0;
+    } catch {} finally {
+      el.muted = false;
+    }
+  };
 
   /**
    * 音声再生（必要なら終了まで/または上限msまで待つ）
@@ -268,14 +285,13 @@ export default function App() {
 
         await Promise.race([endedP, sleep(waitMs)]);
 
-        // 上限で抜けた場合は音声を止める（後続演出と重ならないように）
         if (!ended && opts.maxWaitMs) {
           try { el.pause(); } catch {}
         }
       }
       return true;
     } catch {
-      // 失敗時：フォールバックに変えて再挑戦
+      // 失敗時：フォールバックで再挑戦
       try {
         if (el.src !== VOICE_FALLBACK) {
           el.src = VOICE_FALLBACK; el.load(); await el.play();
@@ -299,7 +315,7 @@ export default function App() {
         // noop → ビープへ
       }
 
-      // 最後の手段：短いビープ（必要なら上限分だけ待つ）
+      // 最後の手段：短いビープ
       try {
         const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
         const ctx = new AC();
@@ -317,7 +333,6 @@ export default function App() {
       return false;
     }
   };
-  // ====== 変更① ここまで ======
 
   // キャンバスへ描画＆保存
   const drawAndSave = async (): Promise<Snapshot> => {
@@ -384,11 +399,14 @@ export default function App() {
     return shot;
   };
 
-  // —— ここが順序制御の本丸 ——
+  // —— シーケンス —— 前セリフ → カウントダウン → フラッシュ＆保存(＋同時シャッター音) → 後セリフ
   const doCapture = async () => {
-    // ====== ここから変更②：前セリフは「言い切る or 最大3秒」待つ ======
-    await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 3000 });
-    // ====== 変更② ここまで ======
+    // iOS対策：ユーザー操作直後に SFX/後セリフを“解錠”
+    await primeAudio(voiceShutterRef.current);
+    await primeAudio(voicePostRef.current);
+
+    // 1) 前セリフ（言い切る or 最大3秒）
+    await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 30000 });
 
     // 2) カウントダウン
     if (timerSec > 0) {
@@ -399,12 +417,16 @@ export default function App() {
       setCountdown(0);
     }
 
-    // 3) フラッシュ ＆ 保存
+    // 3) フラッシュ＆保存（同時にシャッターSFX開始）
     setFlashOn(true);
+    const shutterP = playVoice(voiceShutterRef.current, { waitEnd: true, maxWaitMs: 1200 });
     setTimeout(() => setFlashOn(false), 350);
     await drawAndSave();
 
-    // 4) 後セリフ（完了待ちは不要）
+    // シャッター音が終わるまで（最長1.2s）待ってから…
+    try { await shutterP; } catch {}
+
+    // 4) 撮影後セリフ
     await playVoice(voicePostRef.current);
   };
 
@@ -543,15 +565,15 @@ export default function App() {
               ガイド{guideOn ? "ON" : "OFF"}
             </button>
 
-            {/* シャッター音（フラグ自体はそのまま。セリフ再生の可否にも使います） */}
+            {/* 撮影音ON/OFF（セリフ/シャッター音の一括トグルにしたい場合はここを利用） */}
             <button
               onClick={() => setShutterSoundOn((v) => !v)}
               className={`rounded-2xl px-3 py-2 ${
                 shutterSoundOn ? "bg-emerald-600" : "bg-slate-700 hover:bg-slate-600"
               }`}
-              title="シャッター音のオン/オフ"
+              title="セリフ/効果音のオン/オフ"
             >
-              撮影音{shutterSoundOn ? "ON" : "OFF"}
+              セリフ/効果音{shutterSoundOn ? "ON" : "OFF"}
             </button>
 
             {/* Torch */}
@@ -656,9 +678,10 @@ export default function App() {
           </div>
 
           <canvas ref={canvasRef} className="hidden" />
-          {/* ←前セリフ / 後セリフ。撮影ボタン=ユーザー操作起点なのでiOSでも再生OK */}
-          <audio ref={voicePreRef}  src={VOICE_PRE_URL}  preload="auto" playsInline />
-          <audio ref={voicePostRef} src={VOICE_POST_URL} preload="auto" playsInline />
+          {/* 音源たち */}
+          <audio ref={voicePreRef}     src={VOICE_PRE_URL}  preload="auto" playsInline />
+          <audio ref={voiceShutterRef} src={VOICE_FALLBACK} preload="auto" playsInline />
+          <audio ref={voicePostRef}    src={VOICE_POST_URL} preload="auto" playsInline />
 
           {snapshots.length > 0 && (
             <div className="mt-5">
