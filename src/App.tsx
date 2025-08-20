@@ -12,9 +12,9 @@ const frames = [
 const SETTINGS_KEY = "oshi.camera.settings.v1";
 
 // ===== 音源（Vite解決） =====
-const VOICE_PRE_URL     = new URL("./assets/voice_pre.mp3",     import.meta.url).href;
-const VOICE_POST_URL    = new URL("./assets/voice_post.mp3",    import.meta.url).href;
-const VOICE_SHUTTER_URL = new URL("./assets/voice_shutter.mp3", import.meta.url).href; // シャッターSFX兼フォールバック
+const VOICE_PRE_URL     = new URL("./assets/voice/voice_pre.mp3",     import.meta.url).href;
+const VOICE_POST_URL    = new URL("./assets/voice/voice_post.mp3",    import.meta.url).href;
+const VOICE_SHUTTER_URL = new URL("./assets/voice/voice_shutter.mp3", import.meta.url).href; // シャッターSFX兼フォールバック
 
 // ===== PNGフレームのマッピング（src/assets/frames/） =====
 const FRAME_SRC: Record<string, Record<"3:4"|"1:1"|"16:9", string>> = {
