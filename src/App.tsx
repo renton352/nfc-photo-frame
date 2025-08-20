@@ -214,32 +214,110 @@ export default function App() {
     } catch {}
   };
 
-  // ---- 音再生ヘルパー（失敗時は短いビープでフォールバック）----
-  const playVoice = async (el: HTMLAudioElement | null) => {
+  // ====== ここから変更①：playVoice を上限付き待機に差し替え ======
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * 音声再生（必要なら終了まで/または上限msまで待つ）
+   * - waitEnd: true なら ended まで待機
+   * - maxWaitMs: 上限ミリ秒（超えたら一旦停止して次へ進む）
+   */
+  const playVoice = async (
+    el: HTMLAudioElement | null,
+    opts: { waitEnd?: boolean; maxWaitMs?: number } = {}
+  ) => {
     if (!el) return false;
+
+    try { el.pause(); } catch {}
+    el.currentTime = 0;
+    el.volume = 1.0;
+
+    // ソースが壊れている/404ならフォールバックに切替
+    const NO_SOURCE = 3 as number;
+    if ((el as any).error || el.networkState === NO_SOURCE) {
+      try { el.src = VOICE_FALLBACK; el.load(); } catch {}
+    }
+
+    // duration 取得（iOS対策）
+    if (!Number.isFinite(el.duration) || el.duration <= 0) {
+      await new Promise<void>((res) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; res(); } };
+        el.addEventListener("loadedmetadata", finish, { once: true });
+        el.addEventListener("canplaythrough", finish, { once: true });
+        setTimeout(finish, 700);
+      });
+    }
+
     try {
-      el.currentTime = 0;
-      el.volume = 1.0;
       await el.play();
+
+      if (opts.waitEnd) {
+        const remainMs = Number.isFinite(el.duration)
+          ? Math.max(0, (el.duration - el.currentTime) * 1000)
+          : 900;
+
+        const waitMs = opts.maxWaitMs
+          ? Math.min(remainMs + 120, opts.maxWaitMs)
+          : (remainMs + 120);
+
+        let ended = false;
+        const endedP = new Promise<void>((res) =>
+          el.addEventListener("ended", () => { ended = true; res(); }, { once: true })
+        );
+
+        await Promise.race([endedP, sleep(waitMs)]);
+
+        // 上限で抜けた場合は音声を止める（後続演出と重ならないように）
+        if (!ended && opts.maxWaitMs) {
+          try { el.pause(); } catch {}
+        }
+      }
       return true;
     } catch {
-      // ビープ（極短）
+      // 失敗時：フォールバックに変えて再挑戦
+      try {
+        if (el.src !== VOICE_FALLBACK) {
+          el.src = VOICE_FALLBACK; el.load(); await el.play();
+
+          if (opts.waitEnd) {
+            const ms = Number.isFinite(el.duration)
+              ? Math.max(0, (el.duration - el.currentTime) * 1000) + 120
+              : 900;
+            const waitMs = opts.maxWaitMs ? Math.min(ms, opts.maxWaitMs) : ms;
+
+            let ended = false;
+            const endedP = new Promise<void>((res) =>
+              el.addEventListener("ended", () => { ended = true; res(); }, { once: true })
+            );
+            await Promise.race([endedP, sleep(waitMs)]);
+            if (!ended && opts.maxWaitMs) { try { el.pause(); } catch {} }
+          }
+          return true;
+        }
+      } catch {
+        // noop → ビープへ
+      }
+
+      // 最後の手段：短いビープ（必要なら上限分だけ待つ）
       try {
         const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
         const ctx = new AC();
         if (ctx.state !== "running") await ctx.resume();
         const o = ctx.createOscillator();
         const g = ctx.createGain();
-        o.type = "square";
-        o.frequency.value = 1100;
-        g.gain.value = 0.1;
-        o.connect(g); g.connect(ctx.destination);
+        o.type = "square"; o.frequency.value = 1100;
+        g.gain.value = 0.12; o.connect(g); g.connect(ctx.destination);
         o.start();
-        setTimeout(() => { o.stop(); ctx.close(); }, 160);
+        const BEEP_MS = 180;
+        const limit = opts.maxWaitMs ?? BEEP_MS;
+        await sleep(Math.min(BEEP_MS, limit));
+        setTimeout(() => { o.stop(); ctx.close(); }, BEEP_MS);
       } catch {}
       return false;
     }
   };
+  // ====== 変更① ここまで ======
 
   // キャンバスへ描画＆保存
   const drawAndSave = async (): Promise<Snapshot> => {
@@ -308,8 +386,9 @@ export default function App() {
 
   // —— ここが順序制御の本丸 ——
   const doCapture = async () => {
-    // 1) 前セリフ（ユーザー操作直後に再生：iOSでも確実）
-    await playVoice(voicePreRef.current);
+    // ====== ここから変更②：前セリフは「言い切る or 最大3秒」待つ ======
+    await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 3000 });
+    // ====== 変更② ここまで ======
 
     // 2) カウントダウン
     if (timerSec > 0) {
@@ -325,7 +404,7 @@ export default function App() {
     setTimeout(() => setFlashOn(false), 350);
     await drawAndSave();
 
-    // 4) 後セリフ
+    // 4) 後セリフ（完了待ちは不要）
     await playVoice(voicePostRef.current);
   };
 
