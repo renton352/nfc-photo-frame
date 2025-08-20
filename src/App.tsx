@@ -4,83 +4,9 @@ import { motion } from "framer-motion";
 type Snapshot = { url: string; ts: number; blob?: Blob };
 
 const frames = [
-  {
-    id: "sparkle",
-    name: "キラキラ・フレーム",
-    render: () => (
-      <div className="pointer-events-none absolute inset-0">
-        <div
-          className="absolute top-3 left-3 h-16 w-16 rounded-full blur-md opacity-70"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
-          }}
-        />
-        <div
-          className="absolute top-3 right-3 h-16 w-16 rounded-full blur-md opacity-70"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
-          }}
-        />
-        <div
-          className="absolute bottom-3 left-3 h-16 w-16 rounded-full blur-md opacity-70"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
-          }}
-        />
-        <div
-          className="absolute bottom-3 right-3 h-16 w-16 rounded-full blur-md opacity-70"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.0) 60%)",
-          }}
-        />
-        <div className="absolute inset-2 rounded-2xl border-[6px] border-white/70 shadow-[0_0_40px_rgba(255,255,255,0.35)]" />
-      </div>
-    ),
-  },
-  {
-    id: "ribbon",
-    name: "リボン・フレーム",
-    render: () => (
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-3 rounded-3xl border-8 border-pink-300/80" />
-        <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-pink-400 text-white text-xs px-4 py-2 rounded-full shadow-lg">
-          With ❤️ from Oshi
-        </div>
-        <div className="absolute bottom-6 right-6 bg-white/80 backdrop-blur px-3 py-1 rounded-full text-sm font-semibold">
-          #Today
-        </div>
-      </div>
-    ),
-  },
-  {
-    id: "neon",
-    name: "ネオン・フレーム",
-    render: () => (
-      <div className="pointer-events-none absolute inset-0">
-        <div
-          className="absolute inset-4 rounded-2xl"
-          style={{
-            boxShadow:
-              "0 0 12px rgba(0,255,255,0.8), inset 0 0 24px rgba(0,255,255,0.35)",
-          }}
-        />
-        <div
-          className="absolute bottom-5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-xl font-bold text-white"
-          style={{
-            background:
-              "linear-gradient(90deg, rgba(0,255,255,0.5), rgba(255,0,255,0.5))",
-            textShadow: "0 2px 8px rgba(0,0,0,0.6)",
-          }}
-        >
-          Oshi Camera
-        </div>
-      </div>
-    ),
-  },
+  { id: "sparkle", name: "キラキラ・フレーム" },
+  { id: "ribbon",  name: "リボン・フレーム"   },
+  { id: "neon",    name: "ネオン・フレーム"   },
 ];
 
 const SETTINGS_KEY = "oshi.camera.settings.v1";
@@ -89,6 +15,27 @@ const VOICE_PRE_URL   = new URL("./assets/voice_pre.mp3",   import.meta.url).hre
 const VOICE_POST_URL  = new URL("./assets/voice_post.mp3",  import.meta.url).href;
 // シャッター音には既存の fallback 音源を使います
 const VOICE_FALLBACK  = new URL("./assets/voice_shutter.mp3", import.meta.url).href;
+
+// ★ 追加：PNGフレームのマッピング（src/assets/frames/）
+const FRAME_SRC: Record<string, Record<"3:4"|"1:1"|"16:9", string>> = {
+  sparkle: {
+    "3:4":  new URL("./assets/frames/sparkle_3x4.png",  import.meta.url).href,
+    "1:1":  new URL("./assets/frames/sparkle_1x1.png",  import.meta.url).href,
+    "16:9": new URL("./assets/frames/sparkle_16x9.png", import.meta.url).href,
+  },
+  ribbon: {
+    "3:4":  new URL("./assets/frames/ribbon_3x4.png",   import.meta.url).href,
+    "1:1":  new URL("./assets/frames/ribbon_1x1.png",   import.meta.url).href,
+    "16:9": new URL("./assets/frames/ribbon_16x9.png",  import.meta.url).href,
+  },
+  neon: {
+    "3:4":  new URL("./assets/frames/neon_3x4.png",     import.meta.url).href,
+    "1:1":  new URL("./assets/frames/neon_1x1.png",     import.meta.url).href,
+    "16:9": new URL("./assets/frames/neon_16x9.png",    import.meta.url).href,
+  },
+};
+const getOverlaySrc = (frameId: string, aspect: "3:4"|"1:1"|"16:9") =>
+  FRAME_SRC[frameId]?.[aspect];
 
 type Settings = {
   activeFrame: string;
@@ -104,16 +51,13 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const voicePreRef = useRef<HTMLAudioElement | null>(null);
   const voicePostRef = useRef<HTMLAudioElement | null>(null);
-  const voiceShutterRef = useRef<HTMLAudioElement | null>(null); // ★追加：シャッターSFX
+  const voiceShutterRef = useRef<HTMLAudioElement | null>(null); // シャッターSFX
   const params = useMemo(() => new URLSearchParams(location.search), []);
 
   // URLパラメータ or 保存値 or 既定
   const saved: Partial<Settings> = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); }
+    catch { return {}; }
   }, []);
 
   const initialFrame = (params.get("frame") || saved.activeFrame || frames[0].id) as string;
@@ -174,10 +118,8 @@ export default function App() {
 
       let stream: MediaStream | null = null;
       for (const c of candidates) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia(c);
-          break;
-        } catch {}
+        try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+        catch {}
       }
       if (!stream) throw new Error("no stream");
 
@@ -187,7 +129,6 @@ export default function App() {
       }
       setReady(true);
 
-      // Torch対応判定
       const track = stream.getVideoTracks?.()[0];
       const caps = (track?.getCapabilities?.() as any) || {};
       if (caps && "torch" in caps) setTorchSupported(true);
@@ -197,14 +138,12 @@ export default function App() {
     }
   };
 
-  // 向きが変わるたびに取り直し（初期は user）
   useEffect(() => {
     startStream(facing);
     return () => stopStream();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
-  // Torch切替
   const applyTorch = async (on: boolean) => {
     try {
       const stream: MediaStream | undefined = (videoRef.current as any)?.srcObject;
@@ -219,7 +158,7 @@ export default function App() {
   // ====== 再生ヘルパー群 ======
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  // ★追加：ユーザー操作直後に“無音ワンプレイ”して解錠（iOS対策）
+  // ユーザー操作直後に“無音ワンプレイ”して解錠（iOS対策）
   const primeAudio = async (el: HTMLAudioElement | null) => {
     if (!el) return;
     try {
@@ -249,13 +188,11 @@ export default function App() {
     el.currentTime = 0;
     el.volume = 1.0;
 
-    // ソースが壊れている/404ならフォールバックに切替
     const NO_SOURCE = 3 as number;
     if ((el as any).error || el.networkState === NO_SOURCE) {
       try { el.src = VOICE_FALLBACK; el.load(); } catch {}
     }
 
-    // duration 取得（iOS対策）
     if (!Number.isFinite(el.duration) || el.duration <= 0) {
       await new Promise<void>((res) => {
         let done = false;
@@ -291,7 +228,6 @@ export default function App() {
       }
       return true;
     } catch {
-      // 失敗時：フォールバックで再挑戦
       try {
         if (el.src !== VOICE_FALLBACK) {
           el.src = VOICE_FALLBACK; el.load(); await el.play();
@@ -311,9 +247,7 @@ export default function App() {
           }
           return true;
         }
-      } catch {
-        // noop → ビープへ
-      }
+      } catch {}
 
       // 最後の手段：短いビープ
       try {
@@ -364,31 +298,19 @@ export default function App() {
       ctx.fillText("(Camera preview placeholder)", w / 2, h / 2);
     }
 
-    // フレーム描画
-    switch (activeFrame) {
-      case "sparkle":
-        ctx.strokeStyle = "rgba(255,255,255,0.85)";
-        ctx.lineWidth = 18; ctx.strokeRect(16, 16, w - 32, h - 32);
-        break;
-      case "ribbon":
-        ctx.strokeStyle = "rgba(244,114,182,0.9)";
-        ctx.lineWidth = 24; ctx.strokeRect(20, 20, w - 40, h - 40);
-        ctx.fillStyle = "rgba(244,114,182,1)";
-        const rw = 260; ctx.fillRect((w - rw) / 2, 8, rw, 56);
-        ctx.fillStyle = "white"; ctx.font = "bold 28px system-ui"; ctx.textAlign = "center";
-        ctx.fillText("With ❤️ from Oshi", w / 2, 45);
-        ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = "600 26px system-ui";
-        ctx.fillText("#Today", w - 120, h - 40);
-        break;
-      case "neon":
-        ctx.strokeStyle = "rgba(0,255,255,0.8)";
-        (ctx as any).shadowColor = "rgba(0,255,255,0.6)";
-        (ctx as any).shadowBlur = 25; ctx.lineWidth = 16;
-        ctx.strokeRect(26, 26, w - 52, h - 52); (ctx as any).shadowBlur = 0;
-        ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.font = "bold 38px system-ui";
-        ctx.textAlign = "center"; ctx.fillText("Oshi Camera", w / 2, h - 32);
-        break;
-    }
+    // ★ 置き換え：Canvas に PNG フレームを合成
+    try {
+      const src = getOverlaySrc(activeFrame, aspect);
+      if (src) {
+        const overlay = new Image();
+        overlay.src = src;
+        await new Promise<void>((ok) => {
+          overlay.onload = () => ok();
+          overlay.onerror = () => ok(); // 無くても続行
+        });
+        ctx.drawImage(overlay, 0, 0, w, h);
+      }
+    } catch {}
 
     const blob: Blob = await new Promise((resolve) =>
       canvas.toBlob((b) => resolve(b as Blob), "image/png")
@@ -401,14 +323,11 @@ export default function App() {
 
   // —— シーケンス —— 前セリフ → カウントダウン → フラッシュ＆保存(＋同時シャッター音) → 後セリフ
   const doCapture = async () => {
-    // iOS対策：ユーザー操作直後に SFX/後セリフを“解錠”
     await primeAudio(voiceShutterRef.current);
     await primeAudio(voicePostRef.current);
 
-    // 1) 前セリフ（言い切る or 最大3秒）
     await playVoice(voicePreRef.current, { waitEnd: true, maxWaitMs: 30000 });
 
-    // 2) カウントダウン
     if (timerSec > 0) {
       for (let i = timerSec; i >= 1; i--) {
         setCountdown(i);
@@ -417,20 +336,14 @@ export default function App() {
       setCountdown(0);
     }
 
-    // 3) フラッシュ＆保存（同時にシャッターSFX開始）
     setFlashOn(true);
     const shutterP = playVoice(voiceShutterRef.current, { waitEnd: true, maxWaitMs: 1200 });
     setTimeout(() => setFlashOn(false), 350);
     await drawAndSave();
 
-    // シャッター音が終わるまで（最長1.2s）待ってから…
     try { await shutterP; } catch {}
-
-    // 4) 撮影後セリフ
     await playVoice(voicePostRef.current);
   };
-
-  const FrameOverlay = (frames.find((f) => f.id === activeFrame) as any)?.render;
 
   const shareLast = async () => {
     const shot = snapshots[0];
@@ -491,7 +404,7 @@ export default function App() {
               <ul className="list-disc ml-6 space-y-1 text-slate-200">
                 <li>起動: NDEF（URL）/ iOSショートカット / PWA</li>
                 <li>撮影: <code>getUserMedia</code> + <code>Canvas</code></li>
-                <li>フレーム: Canvas描画 or 透過PNG重畳</li>
+                <li>フレーム: 透過PNG重畳</li>
                 <li>保存/共有: <code>canvas.toBlob</code> + Web Share / Clipboard</li>
               </ul>
             </Section>
@@ -565,7 +478,7 @@ export default function App() {
               ガイド{guideOn ? "ON" : "OFF"}
             </button>
 
-            {/* 撮影音ON/OFF（セリフ/シャッター音の一括トグルにしたい場合はここを利用） */}
+            {/* セリフ/効果音 ON/OFF */}
             <button
               onClick={() => setShutterSoundOn((v) => !v)}
               className={`rounded-2xl px-3 py-2 ${
@@ -630,32 +543,17 @@ export default function App() {
               </div>
             )}
 
-            {/* フレーム */}
-            <div className="absolute inset-0">{FrameOverlay && <FrameOverlay />}</div>
-
-            {/* カウントダウン */}
-            {countdown > 0 && (
-              <div className="absolute inset-0 grid place-items-center">
-                <motion.div
-                  key={countdown}
-                  initial={{ scale: 0.6, opacity: 0 }}
-                  animate={{ scale: 1.2, opacity: 1 }}
-                  className="bg-black/40 rounded-full w-28 h-28 grid place-items-center border border-white/30"
-                >
-                  <div className="text-5xl font-black">{countdown}</div>
-                </motion.div>
-              </div>
-            )}
-
-            {/* フラッシュ（白100% + 0.35s） */}
-            {flashOn && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: [0, 1, 0] }}
-                transition={{ duration: 0.35, ease: "easeOut", times: [0, 0.2, 1] }}
-                className="absolute inset-0 bg-white"
-              />
-            )}
+            {/* ★ PNGフレーム重畳（プレビュー） */}
+            {(() => {
+              const src = getOverlaySrc(activeFrame, aspect);
+              return src ? (
+                <img
+                  src={src}
+                  alt=""
+                  className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+                />
+              ) : null;
+            })()}
           </div>
 
           <div className="mt-4 flex gap-2">
